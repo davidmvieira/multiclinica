@@ -3,12 +3,14 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
+    "dev": "next dev -p 3000 -H 0.0.0.0",
     "build": "next build",
     "start": "next start"
   },
   "dependencies": {
-    "@vercel/speed-insights": "^2.1.0",
+    "@supabase/supabase-js": "^2.119.2",
+    "lucide-react": "^1.78.0",
+    "motion": "^14.14.0",
     "next": "16.4.6",
     "react": "19.3.1",
     "react-dom": "19.3.1"

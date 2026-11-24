@@ -38,7 +38,7 @@ export default function HomePage() {
               Entrar
             </a>
             <a
-              href="/login"
+              href="/login?mode=register"
               className="rounded-lg bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-emerald-700"
             >
               Começar
@@ -57,12 +57,12 @@ export default function HomePage() {
               A clínica inteira em um só lugar.
             </h1>
             <p className="mt-6 max-w-xl text-lg leading-relaxed text-slate-600">
-              Prontuário, agenda, avaliações e financeiro para fisioterapeutas
+              Prontuário, agenda, avaliações e financeiro para profissionais
               que querem mais tempo com o paciente e menos com papel.
             </p>
             <div className="mt-8 flex flex-col gap-3 sm:flex-row">
               <a
-                href="/login"
+                href="/login?mode=register"
                 className="inline-flex items-center justify-center rounded-lg bg-emerald-600 px-6 py-3 font-semibold text-white transition hover:bg-emerald-700"
               >
                 Começar agora
@@ -127,7 +127,7 @@ export default function HomePage() {
             Pronto para simplificar sua clínica?
           </h2>
           <a
-            href="/login"
+            href="/login?mode=register"
             className="mt-8 inline-flex items-center justify-center rounded-lg bg-emerald-600 px-6 py-3 font-semibold text-white transition hover:bg-emerald-700"
           >
             Criar conta grátis
