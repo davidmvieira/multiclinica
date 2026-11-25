@@ -1,4 +1,5 @@
 -- Migration: Agenda Multiprofissional (multi-tenant, permissões, disponibilidade, bloqueios, agendamentos e auditoria)
+-- Idempotente mesmo se tabelas como organizations, units, professionals, patients ou appointments já existirem no schema public.
 -- Executar no SQL Editor do Supabase ou via Supabase CLI
 
 create extension if not exists pgcrypto;
@@ -6,22 +7,50 @@ create extension if not exists pgcrypto;
 -- 1. Organizações / Clínicas
 create table if not exists public.organizations (
   id uuid primary key default gen_random_uuid(),
-  owner_user_id uuid references auth.users(id) on delete cascade not null,
-  name text not null,
+  owner_user_id uuid references auth.users(id) on delete cascade,
+  name text not null default 'Minha Clínica',
   timezone text not null default 'America/Sao_Paulo',
   created_at timestamptz not null default now()
 );
 
+alter table public.organizations add column if not exists owner_user_id uuid references auth.users(id) on delete cascade;
+alter table public.organizations add column if not exists name text default 'Minha Clínica';
+alter table public.organizations add column if not exists timezone text not null default 'America/Sao_Paulo';
+alter table public.organizations add column if not exists created_at timestamptz not null default now();
+
+-- Se uma tabela organizations legada usava owner_id ou user_id, preserva o vínculo em owner_user_id
+do $$
+begin
+  if exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public' and table_name = 'organizations' and column_name = 'owner_id'
+  ) then
+    execute 'update public.organizations set owner_user_id = owner_id where owner_user_id is null';
+  elsif exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public' and table_name = 'organizations' and column_name = 'user_id'
+  ) then
+    execute 'update public.organizations set owner_user_id = user_id where owner_user_id is null';
+  end if;
+end $$;
+
 -- 2. Unidades da clínica
 create table if not exists public.units (
   id uuid primary key default gen_random_uuid(),
-  organization_id uuid references public.organizations(id) on delete cascade not null,
-  name text not null,
+  organization_id uuid references public.organizations(id) on delete cascade,
+  name text not null default 'Unidade Matriz',
   address text,
   timezone text not null default 'America/Sao_Paulo',
   is_active boolean not null default true,
   created_at timestamptz not null default now()
 );
+
+alter table public.units add column if not exists organization_id uuid references public.organizations(id) on delete cascade;
+alter table public.units add column if not exists name text default 'Unidade Matriz';
+alter table public.units add column if not exists address text;
+alter table public.units add column if not exists timezone text not null default 'America/Sao_Paulo';
+alter table public.units add column if not exists is_active boolean not null default true;
+alter table public.units add column if not exists created_at timestamptz not null default now();
 
 -- 3. Membros e papéis organizacionais
 create table if not exists public.organization_members (
@@ -29,12 +58,20 @@ create table if not exists public.organization_members (
   organization_id uuid references public.organizations(id) on delete cascade not null,
   user_id uuid references auth.users(id) on delete cascade not null,
   unit_id uuid references public.units(id) on delete set null,
-  role text not null check (role in ('admin', 'unit_manager', 'reception', 'professional', 'delegated_manager')),
+  role text not null default 'admin' check (role in ('admin', 'unit_manager', 'reception', 'professional', 'delegated_manager')),
   display_name text,
   email text,
   created_at timestamptz not null default now(),
   unique (organization_id, user_id)
 );
+
+alter table public.organization_members add column if not exists organization_id uuid references public.organizations(id) on delete cascade;
+alter table public.organization_members add column if not exists user_id uuid references auth.users(id) on delete cascade;
+alter table public.organization_members add column if not exists unit_id uuid references public.units(id) on delete set null;
+alter table public.organization_members add column if not exists role text not null default 'admin';
+alter table public.organization_members add column if not exists display_name text;
+alter table public.organization_members add column if not exists email text;
+alter table public.organization_members add column if not exists created_at timestamptz not null default now();
 
 -- 4. Especialidades
 create table if not exists public.specialties (
@@ -46,18 +83,32 @@ create table if not exists public.specialties (
   unique (organization_id, name)
 );
 
+alter table public.specialties add column if not exists organization_id uuid references public.organizations(id) on delete cascade;
+alter table public.specialties add column if not exists name text;
+alter table public.specialties add column if not exists color text not null default '#059669';
+alter table public.specialties add column if not exists created_at timestamptz not null default now();
+
 -- 5. Profissionais
 create table if not exists public.professionals (
   id uuid primary key default gen_random_uuid(),
-  organization_id uuid references public.organizations(id) on delete cascade not null,
+  organization_id uuid references public.organizations(id) on delete cascade,
   unit_id uuid references public.units(id) on delete set null,
   user_id uuid references auth.users(id) on delete set null,
-  name text not null,
+  name text not null default 'Profissional',
   email text,
   color text not null default '#059669',
   is_active boolean not null default true,
   created_at timestamptz not null default now()
 );
+
+alter table public.professionals add column if not exists organization_id uuid references public.organizations(id) on delete cascade;
+alter table public.professionals add column if not exists unit_id uuid references public.units(id) on delete set null;
+alter table public.professionals add column if not exists user_id uuid references auth.users(id) on delete set null;
+alter table public.professionals add column if not exists name text default 'Profissional';
+alter table public.professionals add column if not exists email text;
+alter table public.professionals add column if not exists color text not null default '#059669';
+alter table public.professionals add column if not exists is_active boolean not null default true;
+alter table public.professionals add column if not exists created_at timestamptz not null default now();
 
 -- 6. Vínculo Profissional <-> Especialidade (1 ou mais especialidades)
 create table if not exists public.professional_specialties (
@@ -80,6 +131,16 @@ create table if not exists public.schedules (
   created_at timestamptz not null default now()
 );
 
+alter table public.schedules add column if not exists organization_id uuid references public.organizations(id) on delete cascade;
+alter table public.schedules add column if not exists unit_id uuid references public.units(id) on delete set null;
+alter table public.schedules add column if not exists professional_id uuid references public.professionals(id) on delete cascade;
+alter table public.schedules add column if not exists name text;
+alter table public.schedules add column if not exists slot_duration_minutes integer not null default 60;
+alter table public.schedules add column if not exists min_advance_minutes integer not null default 0;
+alter table public.schedules add column if not exists allow_overbooking boolean not null default false;
+alter table public.schedules add column if not exists is_active boolean not null default true;
+alter table public.schedules add column if not exists created_at timestamptz not null default now();
+
 -- 8. Gestão compartilhada e permissões por agenda
 create table if not exists public.schedule_managers (
   id uuid primary key default gen_random_uuid(),
@@ -97,6 +158,19 @@ create table if not exists public.schedule_managers (
   unique (schedule_id, manager_email)
 );
 
+alter table public.schedule_managers add column if not exists organization_id uuid references public.organizations(id) on delete cascade;
+alter table public.schedule_managers add column if not exists schedule_id uuid references public.schedules(id) on delete cascade;
+alter table public.schedule_managers add column if not exists user_id uuid references auth.users(id) on delete cascade;
+alter table public.schedule_managers add column if not exists manager_name text;
+alter table public.schedule_managers add column if not exists manager_email text;
+alter table public.schedule_managers add column if not exists role text not null default 'delegated_manager';
+alter table public.schedule_managers add column if not exists can_view boolean not null default true;
+alter table public.schedule_managers add column if not exists can_manage_appointments boolean not null default true;
+alter table public.schedule_managers add column if not exists can_manage_availability boolean not null default false;
+alter table public.schedule_managers add column if not exists can_manage_blocks boolean not null default false;
+alter table public.schedule_managers add column if not exists created_at timestamptz not null default now();
+create unique index if not exists uq_schedule_managers_schedule_email on public.schedule_managers (schedule_id, manager_email);
+
 -- 9. Regras de disponibilidade / jornada semanal por agenda
 create table if not exists public.availability_rules (
   id uuid primary key default gen_random_uuid(),
@@ -111,6 +185,17 @@ create table if not exists public.availability_rules (
   created_at timestamptz not null default now(),
   unique (schedule_id, day_of_week)
 );
+
+alter table public.availability_rules add column if not exists organization_id uuid references public.organizations(id) on delete cascade;
+alter table public.availability_rules add column if not exists schedule_id uuid references public.schedules(id) on delete cascade;
+alter table public.availability_rules add column if not exists day_of_week smallint;
+alter table public.availability_rules add column if not exists start_time time;
+alter table public.availability_rules add column if not exists end_time time;
+alter table public.availability_rules add column if not exists break_start time;
+alter table public.availability_rules add column if not exists break_end time;
+alter table public.availability_rules add column if not exists is_active boolean not null default true;
+alter table public.availability_rules add column if not exists created_at timestamptz not null default now();
+create unique index if not exists uq_availability_rules_schedule_day on public.availability_rules (schedule_id, day_of_week);
 
 -- 10. Bloqueios / ausências / clínica fechada
 create table if not exists public.schedule_blocks (
@@ -128,15 +213,32 @@ create table if not exists public.schedule_blocks (
   check (ends_at > starts_at)
 );
 
+alter table public.schedule_blocks add column if not exists organization_id uuid references public.organizations(id) on delete cascade;
+alter table public.schedule_blocks add column if not exists unit_id uuid references public.units(id) on delete set null;
+alter table public.schedule_blocks add column if not exists schedule_id uuid references public.schedules(id) on delete cascade;
+alter table public.schedule_blocks add column if not exists title text;
+alter table public.schedule_blocks add column if not exists reason text;
+alter table public.schedule_blocks add column if not exists starts_at timestamptz;
+alter table public.schedule_blocks add column if not exists ends_at timestamptz;
+alter table public.schedule_blocks add column if not exists is_recurring boolean not null default false;
+alter table public.schedule_blocks add column if not exists created_by uuid references auth.users(id) on delete set null;
+alter table public.schedule_blocks add column if not exists created_at timestamptz not null default now();
+
 -- 11. Pacientes (dados administrativos sem exposição clínica na grade)
 create table if not exists public.patients (
   id uuid primary key default gen_random_uuid(),
-  organization_id uuid references public.organizations(id) on delete cascade not null,
-  name text not null,
+  organization_id uuid references public.organizations(id) on delete cascade,
+  name text not null default 'Paciente',
   phone text,
   email text,
   created_at timestamptz not null default now()
 );
+
+alter table public.patients add column if not exists organization_id uuid references public.organizations(id) on delete cascade;
+alter table public.patients add column if not exists name text default 'Paciente';
+alter table public.patients add column if not exists phone text;
+alter table public.patients add column if not exists email text;
+alter table public.patients add column if not exists created_at timestamptz not null default now();
 
 -- 12. Serviços / procedimentos
 create table if not exists public.services (
@@ -149,18 +251,25 @@ create table if not exists public.services (
   created_at timestamptz not null default now()
 );
 
+alter table public.services add column if not exists organization_id uuid references public.organizations(id) on delete cascade;
+alter table public.services add column if not exists specialty_id uuid references public.specialties(id) on delete set null;
+alter table public.services add column if not exists name text;
+alter table public.services add column if not exists duration_minutes integer not null default 60;
+alter table public.services add column if not exists is_active boolean not null default true;
+alter table public.services add column if not exists created_at timestamptz not null default now();
+
 -- 13. Agendamentos
 create table if not exists public.appointments (
   id uuid primary key default gen_random_uuid(),
-  organization_id uuid references public.organizations(id) on delete cascade not null,
+  organization_id uuid references public.organizations(id) on delete cascade,
   unit_id uuid references public.units(id) on delete set null,
-  schedule_id uuid references public.schedules(id) on delete cascade not null,
-  professional_id uuid references public.professionals(id) on delete cascade not null,
-  patient_id uuid references public.patients(id) on delete restrict not null,
+  schedule_id uuid references public.schedules(id) on delete cascade,
+  professional_id uuid references public.professionals(id) on delete cascade,
+  patient_id uuid references public.patients(id) on delete restrict,
   service_id uuid references public.services(id) on delete set null,
   specialty_id uuid references public.specialties(id) on delete set null,
-  starts_at timestamptz not null,
-  ends_at timestamptz not null,
+  starts_at timestamptz,
+  ends_at timestamptz,
   status text not null default 'pending' check (
     status in (
       'pending',
@@ -179,9 +288,26 @@ create table if not exists public.appointments (
   created_by uuid references auth.users(id) on delete set null,
   updated_by uuid references auth.users(id) on delete set null,
   created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now(),
-  check (ends_at > starts_at)
+  updated_at timestamptz not null default now()
 );
+
+alter table public.appointments add column if not exists organization_id uuid references public.organizations(id) on delete cascade;
+alter table public.appointments add column if not exists unit_id uuid references public.units(id) on delete set null;
+alter table public.appointments add column if not exists schedule_id uuid references public.schedules(id) on delete cascade;
+alter table public.appointments add column if not exists professional_id uuid references public.professionals(id) on delete cascade;
+alter table public.appointments add column if not exists patient_id uuid references public.patients(id) on delete restrict;
+alter table public.appointments add column if not exists service_id uuid references public.services(id) on delete set null;
+alter table public.appointments add column if not exists specialty_id uuid references public.specialties(id) on delete set null;
+alter table public.appointments add column if not exists starts_at timestamptz;
+alter table public.appointments add column if not exists ends_at timestamptz;
+alter table public.appointments add column if not exists status text not null default 'pending';
+alter table public.appointments add column if not exists is_fit_in boolean not null default false;
+alter table public.appointments add column if not exists recurrence_group_id uuid;
+alter table public.appointments add column if not exists notes_admin text;
+alter table public.appointments add column if not exists created_by uuid references auth.users(id) on delete set null;
+alter table public.appointments add column if not exists updated_by uuid references auth.users(id) on delete set null;
+alter table public.appointments add column if not exists created_at timestamptz not null default now();
+alter table public.appointments add column if not exists updated_at timestamptz not null default now();
 
 -- 14. Histórico / auditoria de agendamentos
 create table if not exists public.appointment_audit_logs (
@@ -196,6 +322,16 @@ create table if not exists public.appointment_audit_logs (
   new_values jsonb,
   created_at timestamptz not null default now()
 );
+
+alter table public.appointment_audit_logs add column if not exists organization_id uuid references public.organizations(id) on delete cascade;
+alter table public.appointment_audit_logs add column if not exists appointment_id uuid references public.appointments(id) on delete set null;
+alter table public.appointment_audit_logs add column if not exists schedule_id uuid references public.schedules(id) on delete set null;
+alter table public.appointment_audit_logs add column if not exists actor_user_id uuid references auth.users(id) on delete set null;
+alter table public.appointment_audit_logs add column if not exists actor_email text;
+alter table public.appointment_audit_logs add column if not exists action text;
+alter table public.appointment_audit_logs add column if not exists previous_values jsonb;
+alter table public.appointment_audit_logs add column if not exists new_values jsonb;
+alter table public.appointment_audit_logs add column if not exists created_at timestamptz not null default now();
 
 create index if not exists idx_appointments_org_starts
   on public.appointments (organization_id, starts_at);
