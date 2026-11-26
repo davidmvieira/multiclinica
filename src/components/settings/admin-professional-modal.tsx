@@ -1,10 +1,10 @@
 'use client';
 
-import { Plus, Stethoscope, X } from 'lucide-react';
+import { Eye, EyeOff, Plus, Stethoscope, X } from 'lucide-react';
 import { useState } from 'react';
 
 import { PROFESSIONAL_COLORS } from '@/lib/agenda/constants';
-import type { AgendaSpecialty } from '@/types/agenda';
+import type { AgendaSpecialty, MemberRole } from '@/types/agenda';
 import type {
   SettingsMember,
   SettingsProfessional,
@@ -16,6 +16,7 @@ interface AdminProfessionalModalProps {
   units: SettingsUnit[];
   specialties: AgendaSpecialty[];
   members: SettingsMember[];
+  canManageAdmins?: boolean;
   onClose: () => void;
   onSaved: (notice?: string) => Promise<void>;
   onSpecialtyCreated: (spec: AgendaSpecialty) => void;
@@ -26,22 +27,33 @@ export default function AdminProfessionalModal({
   units,
   specialties,
   members,
+  canManageAdmins = true,
   onClose,
   onSaved,
   onSpecialtyCreated,
 }: AdminProfessionalModalProps) {
   const isEditing = Boolean(professional);
 
+  const initialUnits =
+    professional?.unit_ids && professional.unit_ids.length > 0
+      ? professional.unit_ids
+      : professional?.unit_id
+        ? [professional.unit_id]
+        : units[0]?.id
+          ? [units[0].id]
+          : [];
+
   const [name, setName] = useState(professional?.name ?? '');
   const [email, setEmail] = useState(professional?.email ?? '');
+  const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [memberRole, setMemberRole] = useState<MemberRole>('professional');
   const [phone, setPhone] = useState(professional?.phone ?? '');
   const [councilNumber, setCouncilNumber] = useState(
     professional?.council_number ?? ''
   );
   const [userId, setUserId] = useState(professional?.user_id ?? '');
-  const [unitId, setUnitId] = useState(
-    professional?.unit_id ?? units[0]?.id ?? ''
-  );
+  const [unitIds, setUnitIds] = useState<string[]>(initialUnits);
   const [color, setColor] = useState(
     professional?.color ?? PROFESSIONAL_COLORS[0].hex
   );
@@ -64,6 +76,12 @@ export default function AdminProfessionalModal({
 
   function toggleSpecialty(id: string) {
     setSpecialtyIds((prev) =>
+      prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]
+    );
+  }
+
+  function toggleUnit(id: string) {
+    setUnitIds((prev) =>
       prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]
     );
   }
@@ -103,6 +121,16 @@ export default function AdminProfessionalModal({
       return;
     }
 
+    if (!isEditing && password && !email.trim()) {
+      setError('Informe o e-mail do profissional para definir uma senha de acesso.');
+      return;
+    }
+
+    if (!isEditing && password && password.length < 6) {
+      setError('A senha de acesso deve ter pelo menos 6 caracteres.');
+      return;
+    }
+
     setSubmitting(true);
     try {
       const res = await fetch('/api/agenda/professionals', {
@@ -112,10 +140,13 @@ export default function AdminProfessionalModal({
           id: professional?.id,
           name: name.trim(),
           email: email.trim(),
+          ...(!isEditing && password ? { password, memberRole } : {}),
+          ...(!isEditing && !password && email.trim() ? { memberRole } : {}),
           phone: phone.trim(),
           councilNumber: councilNumber.trim(),
           userId: userId || null,
-          unitId: unitId || null,
+          unitId: unitIds[0] ?? null,
+          unitIds,
           color,
           specialtyIds,
           slotDurationMinutes,
@@ -128,9 +159,10 @@ export default function AdminProfessionalModal({
         return;
       }
       await onSaved(
-        isEditing
-          ? 'Profissional e agenda atualizados.'
-          : 'Profissional e agenda independente criados.'
+        data.notice ??
+          (isEditing
+            ? 'Profissional e agenda atualizados.'
+            : 'Profissional e agenda independente criados.')
       );
       onClose();
     } catch {
@@ -208,7 +240,7 @@ export default function AdminProfessionalModal({
                 htmlFor="admin-prof-email"
                 className="block text-sm font-medium text-slate-700"
               >
-                E-mail profissional (opcional)
+                E-mail de acesso (opcional)
               </label>
               <input
                 id="admin-prof-email"
@@ -238,6 +270,64 @@ export default function AdminProfessionalModal({
               />
             </div>
 
+            {!isEditing && !userId && (
+              <>
+                <div>
+                  <label
+                    htmlFor="admin-prof-password"
+                    className="block text-sm font-medium text-slate-700"
+                  >
+                    Senha inicial de acesso (opcional)
+                  </label>
+                  <div className="relative mt-1.5">
+                    <input
+                      id="admin-prof-password"
+                      type={showPassword ? 'text' : 'password'}
+                      minLength={6}
+                      maxLength={128}
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      placeholder="Mínimo 6 caracteres para login"
+                      className="h-10 w-full rounded-lg border border-slate-300 bg-white pl-3 pr-10 text-sm text-slate-900 outline-none focus:border-emerald-600"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword((prev) => !prev)}
+                      aria-label={showPassword ? 'Ocultar senha' : 'Mostrar senha'}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-slate-500 hover:text-slate-800"
+                    >
+                      {showPassword ? (
+                        <EyeOff className="h-4 w-4" aria-hidden="true" />
+                      ) : (
+                        <Eye className="h-4 w-4" aria-hidden="true" />
+                      )}
+                    </button>
+                  </div>
+                </div>
+
+                <div>
+                  <label
+                    htmlFor="admin-prof-role"
+                    className="block text-sm font-medium text-slate-700"
+                  >
+                    Perfil de acesso na clínica
+                  </label>
+                  <select
+                    id="admin-prof-role"
+                    value={memberRole}
+                    onChange={(e) => setMemberRole(e.target.value as MemberRole)}
+                    className="mt-1.5 h-10 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-900 outline-none focus:border-emerald-600"
+                  >
+                    <option value="professional">Profissional (própria agenda)</option>
+                    <option value="unit_manager">Gestor de unidade</option>
+                    {canManageAdmins && (
+                      <option value="admin">Administrador da clínica</option>
+                    )}
+                  </select>
+                </div>
+              </>
+            )}
+
             <div>
               <label
                 htmlFor="admin-prof-phone"
@@ -261,7 +351,7 @@ export default function AdminProfessionalModal({
                 htmlFor="admin-prof-user"
                 className="block text-sm font-medium text-slate-700"
               >
-                Conta de acesso vinculada
+                Conta já existente na clínica
               </label>
               <select
                 id="admin-prof-user"
@@ -278,33 +368,12 @@ export default function AdminProfessionalModal({
                 }}
                 className="mt-1.5 h-10 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-900 outline-none focus:border-emerald-600"
               >
-                <option value="">Sem conta vinculada</option>
+                <option value="">
+                  {isEditing ? 'Sem conta vinculada' : 'Vincular/criar por e-mail'}
+                </option>
                 {linkableMembers.map((m) => (
                   <option key={m.id} value={m.user_id ?? ''}>
                     {m.display_name || m.email} ({m.email})
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div>
-              <label
-                htmlFor="admin-prof-unit"
-                className="block text-sm font-medium text-slate-700"
-              >
-                Unidade de atendimento
-              </label>
-              <select
-                id="admin-prof-unit"
-                value={unitId}
-                onChange={(e) => setUnitId(e.target.value)}
-                className="mt-1.5 h-10 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-900 outline-none focus:border-emerald-600"
-              >
-                <option value="">Sem unidade fixa</option>
-                {units.map((u) => (
-                  <option key={u.id} value={u.id}>
-                    {u.name}
-                    {!u.is_active ? ' (Inativa)' : ''}
                   </option>
                 ))}
               </select>
@@ -331,6 +400,43 @@ export default function AdminProfessionalModal({
               </select>
             </div>
           </div>
+
+          {units.length > 0 && (
+            <div>
+              <span className="block text-sm font-medium text-slate-700">
+                Unidades de atendimento
+              </span>
+              <p className="mt-0.5 text-xs text-slate-500">
+                Selecione uma ou mais unidades em que o profissional atende nesta clínica.
+              </p>
+              <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                {units.map((u) => {
+                  const checked = unitIds.includes(u.id);
+                  return (
+                    <label
+                      key={u.id}
+                      className={`flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-2 text-sm transition ${
+                        checked
+                          ? 'border-emerald-500 bg-emerald-50 text-emerald-950'
+                          : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
+                      }`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={() => toggleUnit(u.id)}
+                        className="h-4 w-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-600"
+                      />
+                      <span className="truncate font-medium">
+                        {u.name}
+                        {!u.is_active ? ' (Inativa)' : ''}
+                      </span>
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
+          )}
 
           <div>
             <div className="flex items-center justify-between gap-2">

@@ -40,6 +40,7 @@ export interface SettingsUnit extends AgendaUnit {
 
 export interface SettingsPayload {
   organization: AgendaOrganization | null;
+  organizations?: AgendaOrganization[];
   currentUserId: string;
   role: MemberRole;
   isAdmin: boolean;

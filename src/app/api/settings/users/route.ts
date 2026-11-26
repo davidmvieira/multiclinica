@@ -115,7 +115,8 @@ export async function POST(req: NextRequest) {
   const { context } = await resolveAgendaAccessContext(
     supabase,
     session.user.id,
-    session.user.email
+    session.user.email,
+    session.activeOrganizationId
   );
 
   if (!context || !context.isAdmin) {
@@ -399,24 +400,40 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // Step 3: If user_id is still null, attempt secure SQL RPC link if already in auth.users
-  if (!resolvedUserId) {
-    const { data: linked } = await supabase.rpc('link_auth_user_to_org_member', {
-      target_org_id: context.organization.id,
-      member_email: email,
-    });
-    if (linked === true && member) {
-      const { data: refreshedMember } = await supabase
-        .from('organization_members')
-        .select(
-          'id, organization_id, user_id, unit_id, role, display_name, email, phone, is_active, invite_status, created_at'
-        )
-        .eq('id', member.id)
-        .maybeSingle();
-      if (refreshedMember) {
-        member = refreshedMember;
-        resolvedUserId = refreshedMember.user_id;
+  // Step 3: Resolve link and confirm e-mail without SMTP when created via signUp
+  if (!resolvedUserId || requiresEmailConfirmation) {
+    try {
+      const { data: confirmed } = await supabase.rpc(
+        'confirm_org_member_auth_user',
+        {
+          target_org_id: context.organization.id,
+          member_email: email,
+        }
+      );
+      if (confirmed === true) {
+        requiresEmailConfirmation = false;
+      } else if (!resolvedUserId) {
+        await supabase.rpc('link_auth_user_to_org_member', {
+          target_org_id: context.organization.id,
+          member_email: email,
+        });
       }
+
+      if (member) {
+        const { data: refreshedMember } = await supabase
+          .from('organization_members')
+          .select(
+            'id, organization_id, user_id, unit_id, role, display_name, email, phone, is_active, invite_status, created_at'
+          )
+          .eq('id', member.id)
+          .maybeSingle();
+        if (refreshedMember) {
+          member = refreshedMember;
+          resolvedUserId = refreshedMember.user_id;
+        }
+      }
+    } catch {
+      // Non-blocking if Section 5/6 SQL is not yet applied
     }
   }
 
@@ -439,6 +456,16 @@ export async function POST(req: NextRequest) {
 
     if (prof) {
       createdProfessionalId = prof.id;
+      if (effectiveUnitId) {
+        try {
+          await supabase.from('professional_units').insert({
+            professional_id: prof.id,
+            unit_id: effectiveUnitId,
+          });
+        } catch {
+          // Non-blocking if professional_units table does not exist yet
+        }
+      }
       if (specialtyIds.length > 0) {
         await supabase.from('professional_specialties').insert(
           specialtyIds.map((specialty_id) => ({
@@ -565,7 +592,8 @@ export async function PATCH(req: NextRequest) {
   const { context } = await resolveAgendaAccessContext(
     supabase,
     session.user.id,
-    session.user.email
+    session.user.email,
+    session.activeOrganizationId
   );
 
   if (!context || !context.isAdmin) {
@@ -773,7 +801,8 @@ export async function DELETE(req: NextRequest) {
   const { context } = await resolveAgendaAccessContext(
     supabase,
     session.user.id,
-    session.user.email
+    session.user.email,
+    session.activeOrganizationId
   );
 
   if (!context || !context.isAdmin) {

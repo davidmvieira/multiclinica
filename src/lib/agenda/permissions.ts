@@ -11,6 +11,7 @@ import type {
 
 export interface AgendaAccessContext {
   organization: AgendaOrganization;
+  organizations: AgendaOrganization[];
   role: MemberRole;
   isAdmin: boolean;
   unitId: string | null;
@@ -38,25 +39,32 @@ export function isMissingAgendaTableError(error: {
 export async function resolveAgendaAccessContext(
   supabase: SupabaseClient,
   userId: string,
-  userEmail: string
+  userEmail: string,
+  preferredOrgId?: string | null
 ): Promise<{
   context: AgendaAccessContext | null;
   migrationPending: boolean;
 }> {
-  let { data: ownedOrgs, error: orgError } = await supabase
+  let { data: visibleOrgs, error: orgError } = await supabase
     .from('organizations')
     .select('id, owner_user_id, name, timezone')
-    .limit(1);
+    .order('created_at', { ascending: true });
 
-  if (!orgError && (!ownedOrgs || ownedOrgs.length === 0)) {
-    // Attempt to claim any pre-registered membership matching the authenticated email
+  const needsClaimAttempt =
+    !orgError &&
+    (!visibleOrgs ||
+      visibleOrgs.length === 0 ||
+      (preferredOrgId && !visibleOrgs.some((o) => o.id === preferredOrgId)));
+
+  if (needsClaimAttempt) {
+    // Attempt to claim any pre-registered membership or professional matching the authenticated email
     const { error: claimErr } = await supabase.rpc('claim_pending_org_memberships');
     if (!claimErr) {
       const retry = await supabase
         .from('organizations')
         .select('id, owner_user_id, name, timezone')
-        .limit(1);
-      ownedOrgs = retry.data;
+        .order('created_at', { ascending: true });
+      visibleOrgs = retry.data;
       orgError = retry.error;
     }
   }
@@ -70,10 +78,17 @@ export async function resolveAgendaAccessContext(
     );
   }
 
-  const organization = (ownedOrgs?.[0] ?? null) as AgendaOrganization | null;
-  if (!organization) {
+  const organizations = (visibleOrgs ?? []) as AgendaOrganization[];
+  if (organizations.length === 0) {
     return { context: null, migrationPending: false };
   }
+
+  const organization =
+    (preferredOrgId
+      ? organizations.find((o) => o.id === preferredOrgId)
+      : undefined) ??
+    organizations.find((o) => o.owner_user_id === userId) ??
+    organizations[0];
 
   const isOwner = organization.owner_user_id === userId;
 
@@ -199,6 +214,7 @@ export async function resolveAgendaAccessContext(
   return {
     context: {
       organization,
+      organizations,
       role,
       isAdmin,
       unitId,

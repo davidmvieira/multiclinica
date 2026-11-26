@@ -103,7 +103,8 @@ export async function POST(req: NextRequest) {
   const { context } = await resolveAgendaAccessContext(
     supabase,
     session.user.id,
-    session.user.email
+    session.user.email,
+    session.activeOrganizationId
   );
 
   if (!context) {
@@ -318,7 +319,8 @@ export async function PATCH(req: NextRequest) {
   const { context } = await resolveAgendaAccessContext(
     supabase,
     session.user.id,
-    session.user.email
+    session.user.email,
+    session.activeOrganizationId
   );
 
   if (!context) {

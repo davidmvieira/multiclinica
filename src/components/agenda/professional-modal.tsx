@@ -1,6 +1,6 @@
 'use client';
 
-import { UserPlus, X } from 'lucide-react';
+import { Eye, EyeOff, UserPlus, X } from 'lucide-react';
 import { useState } from 'react';
 
 import { PROFESSIONAL_COLORS } from '@/lib/agenda/constants';
@@ -27,11 +27,20 @@ export default function ProfessionalModal({
 }: ProfessionalModalProps) {
   const isEditing = Boolean(professional);
 
+  const initialUnits =
+    professional?.unit_ids && professional.unit_ids.length > 0
+      ? professional.unit_ids
+      : professional?.unit_id
+        ? [professional.unit_id]
+        : units[0]?.id
+          ? [units[0].id]
+          : [];
+
   const [name, setName] = useState(professional?.name ?? '');
   const [email, setEmail] = useState(professional?.email ?? '');
-  const [unitId, setUnitId] = useState(
-    professional?.unit_id ?? units[0]?.id ?? ''
-  );
+  const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [unitIds, setUnitIds] = useState<string[]>(initialUnits);
   const [color, setColor] = useState(
     professional?.color ?? PROFESSIONAL_COLORS[0].hex
   );
@@ -50,11 +59,27 @@ export default function ProfessionalModal({
     );
   }
 
+  function toggleUnit(id: string) {
+    setUnitIds((prev) =>
+      prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]
+    );
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
     if (!name.trim()) {
       setError('Informe o nome do profissional.');
+      return;
+    }
+
+    if (!isEditing && password && !email.trim()) {
+      setError('Informe o e-mail para criar a senha de acesso.');
+      return;
+    }
+
+    if (!isEditing && password && password.length < 6) {
+      setError('A senha inicial deve ter pelo menos 6 caracteres.');
       return;
     }
 
@@ -67,7 +92,9 @@ export default function ProfessionalModal({
           id: professional?.id,
           name: name.trim(),
           email: email.trim(),
-          unitId: unitId || null,
+          ...(!isEditing && password ? { password } : {}),
+          unitId: unitIds[0] ?? null,
+          unitIds,
           color,
           specialtyIds,
           slotDurationMinutes,
@@ -150,71 +177,114 @@ export default function ProfessionalModal({
           </div>
 
           {!isEditing && (
-            <div>
-              <label
-                htmlFor="prof-email"
-                className="block text-sm font-medium text-slate-700"
-              >
-                E-mail (opcional)
-              </label>
-              <input
-                id="prof-email"
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="marina@clinica.com.br"
-                className="mt-1.5 h-10 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-900 outline-none focus:border-emerald-600"
-              />
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div>
+                <label
+                  htmlFor="prof-email"
+                  className="block text-sm font-medium text-slate-700"
+                >
+                  E-mail de acesso (opcional)
+                </label>
+                <input
+                  id="prof-email"
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="marina@clinica.com.br"
+                  className="mt-1.5 h-10 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-900 outline-none focus:border-emerald-600"
+                />
+              </div>
+
+              <div>
+                <label
+                  htmlFor="prof-password"
+                  className="block text-sm font-medium text-slate-700"
+                >
+                  Senha inicial (opcional)
+                </label>
+                <div className="relative mt-1.5">
+                  <input
+                    id="prof-password"
+                    type={showPassword ? 'text' : 'password'}
+                    minLength={6}
+                    maxLength={128}
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    placeholder="Mínimo 6 caracteres"
+                    className="h-10 w-full rounded-lg border border-slate-300 bg-white pl-3 pr-10 text-sm text-slate-900 outline-none focus:border-emerald-600"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword((prev) => !prev)}
+                    aria-label={showPassword ? 'Ocultar senha' : 'Mostrar senha'}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-slate-500 hover:text-slate-800"
+                  >
+                    {showPassword ? (
+                      <EyeOff className="h-4 w-4" aria-hidden="true" />
+                    ) : (
+                      <Eye className="h-4 w-4" aria-hidden="true" />
+                    )}
+                  </button>
+                </div>
+              </div>
             </div>
           )}
 
-          <div className="grid gap-4 sm:grid-cols-2">
+          {!isEditing && (
             <div>
               <label
-                htmlFor="prof-unit"
+                htmlFor="prof-slot"
                 className="block text-sm font-medium text-slate-700"
               >
-                Unidade
+                Duração padrão da sessão
               </label>
               <select
-                id="prof-unit"
-                value={unitId}
-                onChange={(e) => setUnitId(e.target.value)}
+                id="prof-slot"
+                value={slotDurationMinutes}
+                onChange={(e) =>
+                  setSlotDurationMinutes(Number(e.target.value))
+                }
                 className="mt-1.5 h-10 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-900 outline-none focus:border-emerald-600"
               >
-                {units.map((u) => (
-                  <option key={u.id} value={u.id}>
-                    {u.name}
+                {[30, 45, 50, 60, 90].map((min) => (
+                  <option key={min} value={min}>
+                    {min} minutos
                   </option>
                 ))}
               </select>
             </div>
+          )}
 
-            {!isEditing && (
-              <div>
-                <label
-                  htmlFor="prof-slot"
-                  className="block text-sm font-medium text-slate-700"
-                >
-                  Duração padrão da sessão
-                </label>
-                <select
-                  id="prof-slot"
-                  value={slotDurationMinutes}
-                  onChange={(e) =>
-                    setSlotDurationMinutes(Number(e.target.value))
-                  }
-                  className="mt-1.5 h-10 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-900 outline-none focus:border-emerald-600"
-                >
-                  {[30, 45, 50, 60, 90].map((min) => (
-                    <option key={min} value={min}>
-                      {min} minutos
-                    </option>
-                  ))}
-                </select>
+          {units.length > 0 && (
+            <div>
+              <span className="block text-sm font-medium text-slate-700">
+                Unidades de atendimento
+              </span>
+              <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                {units.map((u) => {
+                  const checked = unitIds.includes(u.id);
+                  return (
+                    <label
+                      key={u.id}
+                      className={`flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-2 text-sm transition ${
+                        checked
+                          ? 'border-emerald-500 bg-emerald-50 text-emerald-950'
+                          : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
+                      }`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={() => toggleUnit(u.id)}
+                        className="h-4 w-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-600"
+                      />
+                      <span className="truncate font-medium">{u.name}</span>
+                    </label>
+                  );
+                })}
               </div>
-            )}
-          </div>
+            </div>
+          )}
 
           <div>
             <span className="block text-sm font-medium text-slate-700">

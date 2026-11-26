@@ -42,6 +42,7 @@ export interface AgendaProfessional {
   id: string;
   organization_id: string;
   unit_id: string | null;
+  unit_ids?: string[];
   user_id: string | null;
   name: string;
   email: string | null;
@@ -158,6 +159,7 @@ export interface SchedulePermissionFlags {
 
 export interface AgendaWorkspacePayload {
   organization: AgendaOrganization | null;
+  organizations?: AgendaOrganization[];
   role: MemberRole;
   isAdmin: boolean;
   permissionsBySchedule: Record<string, SchedulePermissionFlags>;

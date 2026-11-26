@@ -263,6 +263,14 @@ export default function AgendaWorkspace() {
 
   useEffect(() => {
     loadWorkspace();
+    const handleOrgChanged = () => {
+      setLoading(true);
+      void loadWorkspace();
+    };
+    window.addEventListener('iatris:org-changed', handleOrgChanged);
+    return () => {
+      window.removeEventListener('iatris:org-changed', handleOrgChanged);
+    };
   }, [loadWorkspace]);
 
   const timeZone = workspace?.organization?.timezone ?? 'America/Sao_Paulo';
@@ -297,7 +305,11 @@ export default function AgendaWorkspace() {
     if (!workspace) return [];
     let list = workspace.professionals.filter((p) => p.is_active);
     if (filterUnitId) {
-      list = list.filter((p) => p.unit_id === filterUnitId);
+      list = list.filter(
+        (p) =>
+          p.unit_id === filterUnitId ||
+          (p.unit_ids?.includes(filterUnitId) ?? false)
+      );
     }
     if (filterSpecialtyId) {
       list = list.filter((p) => p.specialty_ids.includes(filterSpecialtyId));

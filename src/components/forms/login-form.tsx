@@ -39,8 +39,10 @@ export default function LoginForm({
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
   const [selectedPlan, setSelectedPlan] = useState<PlanSlug>('free');
   const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -56,6 +58,7 @@ export default function LoginForm({
     setMode(nextMode);
     setError(null);
     setNotice(null);
+    setConfirmPassword('');
   }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -69,8 +72,13 @@ export default function LoginForm({
       return;
     }
 
-    if (mode !== 'reset' && password.length < 6) {
+    if (password.length < 6) {
       setError('A senha deve ter pelo menos 6 caracteres.');
+      return;
+    }
+
+    if (mode === 'reset' && password !== confirmPassword) {
+      setError('A confirmação da senha não confere com a nova senha.');
       return;
     }
 
@@ -115,7 +123,7 @@ export default function LoginForm({
 
         if (data.requiresEmailConfirmation) {
           setNotice(
-            `Conta criada no plano ${data.plan?.name ?? selectedPlan}. Verifique seu e-mail para confirmar o cadastro antes de entrar.`
+            `Conta criada no plano ${data.plan?.name ?? selectedPlan}. Se o envio de e-mail ainda não estiver ativo no Supabase, clique em "Esqueci minha senha" para confirmar e definir seu acesso imediatamente.`
           );
           setMode('login');
           setPassword('');
@@ -130,18 +138,25 @@ export default function LoginForm({
       const res = await fetch('/api/auth/reset-password', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: trimmedEmail }),
+        body: JSON.stringify({
+          email: trimmedEmail,
+          password,
+          confirmPassword,
+        }),
       });
 
       const data = await res.json();
       if (!res.ok) {
-        setError(data.error ?? 'Não foi possível solicitar a recuperação.');
+        setError(data.error ?? 'Não foi possível atualizar a senha.');
         return;
       }
 
+      setMode('login');
+      setPassword('');
+      setConfirmPassword('');
       setNotice(
         data.message ??
-          'Se o e-mail estiver cadastrado, enviaremos as instruções para redefinir sua senha.'
+          'Senha atualizada com sucesso no banco. Já pode entrar com a nova senha.'
       );
     } catch {
       setError('Falha de comunicação com o servidor. Tente novamente.');
@@ -260,7 +275,7 @@ export default function LoginForm({
               <h2 className="text-xl font-bold tracking-tight text-slate-900">
                 {mode === 'login' && 'Entrar na sua conta'}
                 {mode === 'register' && 'Criar conta em menos de 1 minuto'}
-                {mode === 'reset' && 'Recuperar senha'}
+                {mode === 'reset' && 'Definir nova senha'}
               </h2>
               <p className="mt-1 text-sm text-slate-600">
                 {mode === 'login' &&
@@ -268,7 +283,7 @@ export default function LoginForm({
                 {mode === 'register' &&
                   'Informe apenas seus dados de acesso e selecione a capacidade desejada.'}
                 {mode === 'reset' &&
-                  'Enviaremos um link de redefinição para o seu e-mail.'}
+                  'Informe seu e-mail e a nova senha para atualizar o acesso diretamente no banco.'}
               </p>
             </div>
 
@@ -395,55 +410,96 @@ export default function LoginForm({
                   </div>
                 </div>
 
-                {mode !== 'reset' && (
-                  <div>
-                    <div className="flex items-center justify-between gap-2">
-                      <label
-                        htmlFor="auth-password"
-                        className="block text-sm font-medium text-slate-800"
+                <div>
+                  <div className="flex items-center justify-between gap-2">
+                    <label
+                      htmlFor="auth-password"
+                      className="block text-sm font-medium text-slate-800"
+                    >
+                      {mode === 'reset' ? 'Nova senha' : 'Senha'}
+                    </label>
+                    {mode === 'login' && (
+                      <button
+                        type="button"
+                        onClick={() => switchMode('reset')}
+                        className="cursor-pointer text-xs font-medium text-emerald-700 transition-colors hover:text-emerald-800 focus-visible:underline focus:outline-none"
                       >
-                        Senha
-                      </label>
-                      {mode === 'login' && (
-                        <button
-                          type="button"
-                          onClick={() => switchMode('reset')}
-                          className="cursor-pointer text-xs font-medium text-emerald-700 transition-colors hover:text-emerald-800 focus-visible:underline focus:outline-none"
-                        >
-                          Esqueci minha senha
-                        </button>
+                        Esqueci minha senha
+                      </button>
+                    )}
+                  </div>
+                  <div className="relative mt-1.5">
+                    <Lock
+                      className="pointer-events-none absolute top-1/2 left-3.5 h-4 w-4 -translate-y-1/2 text-slate-400"
+                      aria-hidden="true"
+                    />
+                    <input
+                      id="auth-password"
+                      name="password"
+                      type={showPassword ? 'text' : 'password'}
+                      required
+                      minLength={6}
+                      autoComplete={
+                        mode === 'login' ? 'current-password' : 'new-password'
+                      }
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      placeholder="Mínimo 6 caracteres"
+                      className="h-11 w-full rounded-lg border border-slate-300 bg-white pr-11 pl-10 text-sm text-slate-900 placeholder:text-slate-400 transition-colors focus:border-emerald-600 focus:ring-2 focus:ring-emerald-600/20 focus:outline-none"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword((prev) => !prev)}
+                      aria-label={
+                        showPassword ? 'Ocultar senha' : 'Mostrar senha'
+                      }
+                      className="absolute top-1/2 right-1.5 flex h-8 w-8 -translate-y-1/2 cursor-pointer items-center justify-center rounded-md text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-700 focus-visible:ring-2 focus-visible:ring-emerald-600 focus:outline-none"
+                    >
+                      {showPassword ? (
+                        <EyeOff className="h-4 w-4" aria-hidden="true" />
+                      ) : (
+                        <Eye className="h-4 w-4" aria-hidden="true" />
                       )}
-                    </div>
+                    </button>
+                  </div>
+                </div>
+
+                {mode === 'reset' && (
+                  <div>
+                    <label
+                      htmlFor="auth-confirm-password"
+                      className="block text-sm font-medium text-slate-800"
+                    >
+                      Confirmar nova senha
+                    </label>
                     <div className="relative mt-1.5">
                       <Lock
                         className="pointer-events-none absolute top-1/2 left-3.5 h-4 w-4 -translate-y-1/2 text-slate-400"
                         aria-hidden="true"
                       />
                       <input
-                        id="auth-password"
-                        name="password"
-                        type={showPassword ? 'text' : 'password'}
+                        id="auth-confirm-password"
+                        name="confirmPassword"
+                        type={showConfirmPassword ? 'text' : 'password'}
                         required
                         minLength={6}
-                        autoComplete={
-                          mode === 'login'
-                            ? 'current-password'
-                            : 'new-password'
-                        }
-                        value={password}
-                        onChange={(e) => setPassword(e.target.value)}
-                        placeholder="Mínimo 6 caracteres"
+                        autoComplete="new-password"
+                        value={confirmPassword}
+                        onChange={(e) => setConfirmPassword(e.target.value)}
+                        placeholder="Repita a nova senha"
                         className="h-11 w-full rounded-lg border border-slate-300 bg-white pr-11 pl-10 text-sm text-slate-900 placeholder:text-slate-400 transition-colors focus:border-emerald-600 focus:ring-2 focus:ring-emerald-600/20 focus:outline-none"
                       />
                       <button
                         type="button"
-                        onClick={() => setShowPassword((prev) => !prev)}
+                        onClick={() => setShowConfirmPassword((prev) => !prev)}
                         aria-label={
-                          showPassword ? 'Ocultar senha' : 'Mostrar senha'
+                          showConfirmPassword
+                            ? 'Ocultar confirmação de senha'
+                            : 'Mostrar confirmação de senha'
                         }
                         className="absolute top-1/2 right-1.5 flex h-8 w-8 -translate-y-1/2 cursor-pointer items-center justify-center rounded-md text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-700 focus-visible:ring-2 focus-visible:ring-emerald-600 focus:outline-none"
                       >
-                        {showPassword ? (
+                        {showConfirmPassword ? (
                           <EyeOff className="h-4 w-4" aria-hidden="true" />
                         ) : (
                           <Eye className="h-4 w-4" aria-hidden="true" />
@@ -599,7 +655,7 @@ export default function LoginForm({
                     {mode === 'reset' && (
                       <>
                         <KeyRound className="h-4 w-4" aria-hidden="true" />
-                        <span>Enviar link de recuperação</span>
+                        <span>Atualizar senha</span>
                       </>
                     )}
                   </>

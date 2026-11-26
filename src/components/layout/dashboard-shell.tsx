@@ -1,6 +1,7 @@
 'use client';
 
 import {
+  Building2,
   Calendar,
   ClipboardCheck,
   FileText,
@@ -17,6 +18,7 @@ import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useEffect, useState, type ReactNode } from 'react';
 
+import type { AgendaOrganization } from '@/types/agenda';
 import type { AuthUser } from '@/types/supabase';
 
 const navItems = [
@@ -44,34 +46,69 @@ export default function DashboardShell({ children }: { children: ReactNode }) {
   const router = useRouter();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [user, setUser] = useState<AuthUser | null>(null);
+  const [organizations, setOrganizations] = useState<AgendaOrganization[]>([]);
+  const [activeOrgId, setActiveOrgId] = useState<string>('');
+  const [switchingOrg, setSwitchingOrg] = useState(false);
   const [sessionLoaded, setSessionLoaded] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
 
   useEffect(() => {
     let active = true;
 
-    fetch('/api/auth/session')
-      .then((res) => res.json())
-      .then((data) => {
-        if (!active) return;
-        setUser(data.user ?? null);
-        setSessionLoaded(true);
-      })
-      .catch(() => {
-        if (!active) return;
-        setSessionLoaded(true);
-      });
+    function fetchSession() {
+      fetch('/api/auth/session', { cache: 'no-store' })
+        .then((res) => res.json())
+        .then((data) => {
+          if (!active) return;
+          setUser(data.user ?? null);
+          setOrganizations(
+            Array.isArray(data.organizations) ? data.organizations : []
+          );
+          setActiveOrgId(data.activeOrganizationId ?? '');
+          setSessionLoaded(true);
+        })
+        .catch(() => {
+          if (!active) return;
+          setSessionLoaded(true);
+        });
+    }
+
+    fetchSession();
+    const handleRefresh = () => fetchSession();
+    window.addEventListener('iatris:org-changed', handleRefresh);
 
     return () => {
       active = false;
+      window.removeEventListener('iatris:org-changed', handleRefresh);
     };
   }, [pathname]);
+
+  async function handleSwitchOrganization(nextOrgId: string) {
+    if (!nextOrgId || nextOrgId === activeOrgId || switchingOrg) return;
+    setSwitchingOrg(true);
+    try {
+      const res = await fetch('/api/account/active-organization', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ organizationId: nextOrgId }),
+      });
+      if (res.ok) {
+        setActiveOrgId(nextOrgId);
+        window.dispatchEvent(new CustomEvent('iatris:org-changed'));
+        router.refresh();
+      }
+    } finally {
+      setSwitchingOrg(false);
+    }
+  }
 
   async function handleLogout() {
     setLoggingOut(true);
     try {
       await fetch('/api/auth/logout', { method: 'POST' });
       setUser(null);
+      setOrganizations([]);
+      setActiveOrgId('');
       router.push('/login');
       router.refresh();
     } finally {
@@ -214,7 +251,29 @@ export default function DashboardShell({ children }: { children: ReactNode }) {
             </nav>
           </div>
 
-          <div className="flex items-center gap-3 shrink-0">
+          <div className="flex items-center gap-2.5 shrink-0">
+            {organizations.length > 1 && (
+              <div className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 px-2.5 h-9">
+                <Building2
+                  className="h-3.5 w-3.5 shrink-0 text-slate-500"
+                  aria-hidden="true"
+                />
+                <select
+                  aria-label="Clínica ativa"
+                  value={activeOrgId}
+                  disabled={switchingOrg}
+                  onChange={(e) => void handleSwitchOrganization(e.target.value)}
+                  className="max-w-[180px] cursor-pointer bg-transparent text-xs font-medium text-slate-800 outline-none disabled:opacity-60"
+                >
+                  {organizations.map((org) => (
+                    <option key={org.id} value={org.id}>
+                      {org.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+
             <Link
               href={user ? '/agenda' : '/login'}
               className="inline-flex h-9 items-center justify-center rounded-lg bg-emerald-600 px-4 text-xs font-semibold text-white transition-colors hover:bg-emerald-700 whitespace-nowrap shrink-0"

@@ -37,7 +37,8 @@ export async function GET(req: NextRequest) {
     const { context, migrationPending } = await resolveAgendaAccessContext(
       supabase,
       session.user.id,
-      session.user.email
+      session.user.email,
+      session.activeOrganizationId
     );
 
     if (migrationPending) {
@@ -98,6 +99,7 @@ export async function GET(req: NextRequest) {
       specialtiesRes,
       professionalsRes,
       profSpecRes,
+      profUnitsRes,
       managersRes,
       availabilityRes,
       blocksRes,
@@ -124,6 +126,9 @@ export async function GET(req: NextRequest) {
       supabase
         .from('professional_specialties')
         .select('professional_id, specialty_id'),
+      supabase
+        .from('professional_units')
+        .select('professional_id, unit_id'),
       visibleScheduleIds.length > 0
         ? supabase
             .from('schedule_managers')
@@ -223,15 +228,34 @@ export async function GET(req: NextRequest) {
       specsByProf.set(link.professional_id, list);
     }
 
+    const unitsByProf = new Map<string, string[]>();
+    if (!profUnitsRes.error) {
+      for (const link of (profUnitsRes.data ?? []) as {
+        professional_id: string;
+        unit_id: string;
+      }[]) {
+        const list = unitsByProf.get(link.professional_id) ?? [];
+        list.push(link.unit_id);
+        unitsByProf.set(link.professional_id, list);
+      }
+    }
+
     const visibleProfIds = new Set(
       context.visibleSchedules.map((s) => s.professional_id)
     );
     const professionals = (professionalsRes.data ?? [])
       .filter((p) => context.isAdmin || visibleProfIds.has(p.id))
-      .map((p) => ({
-        ...p,
-        specialty_ids: specsByProf.get(p.id) ?? [],
-      }));
+      .map((p) => {
+        const extraUnits = unitsByProf.get(p.id) ?? [];
+        const unitIds = Array.from(
+          new Set([...(p.unit_id ? [p.unit_id] : []), ...extraUnits])
+        );
+        return {
+          ...p,
+          unit_ids: unitIds,
+          specialty_ids: specsByProf.get(p.id) ?? [],
+        };
+      });
 
     const blocks = (blocksRes.data ?? []).filter(
       (b) => b.schedule_id === null || visibleScheduleIds.includes(b.schedule_id)
@@ -239,6 +263,7 @@ export async function GET(req: NextRequest) {
 
     const response = NextResponse.json({
       organization: context.organization,
+      organizations: context.organizations,
       role: context.role,
       isAdmin: context.isAdmin,
       permissionsBySchedule: context.permissionsBySchedule,

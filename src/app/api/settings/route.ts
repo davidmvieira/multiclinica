@@ -59,7 +59,8 @@ export async function GET(req: NextRequest) {
     const { context, migrationPending } = await resolveAgendaAccessContext(
       supabase,
       session.user.id,
-      session.user.email
+      session.user.email,
+      session.activeOrganizationId
     );
 
     if (migrationPending) {
@@ -128,6 +129,7 @@ export async function GET(req: NextRequest) {
     if (!context.isAdmin) {
       const response = NextResponse.json({
         organization: context.organization,
+        organizations: context.organizations,
         currentUserId: session.user.id,
         role: context.role,
         isAdmin: false,
@@ -242,7 +244,7 @@ export async function GET(req: NextRequest) {
       }));
     }
 
-    const [specsRes, profSpecsRes, schedulesRes, patientsCountRes] =
+    const [specsRes, profSpecsRes, profUnitsRes, schedulesRes, patientsCountRes] =
       await Promise.all([
         supabase
           .from('specialties')
@@ -252,6 +254,9 @@ export async function GET(req: NextRequest) {
         supabase
           .from('professional_specialties')
           .select('professional_id, specialty_id'),
+        supabase
+          .from('professional_units')
+          .select('professional_id, unit_id'),
         supabase
           .from('schedules')
           .select(
@@ -297,6 +302,18 @@ export async function GET(req: NextRequest) {
       specsByProf.set(link.professional_id, list);
     }
 
+    const unitsByProf = new Map<string, string[]>();
+    if (!profUnitsRes.error) {
+      for (const link of (profUnitsRes.data ?? []) as {
+        professional_id: string;
+        unit_id: string;
+      }[]) {
+        const list = unitsByProf.get(link.professional_id) ?? [];
+        list.push(link.unit_id);
+        unitsByProf.set(link.professional_id, list);
+      }
+    }
+
     const scheduleByProf = new Map<string, AgendaSchedule>();
     for (const sched of (schedulesRes.data ?? []) as AgendaSchedule[]) {
       scheduleByProf.set(sched.professional_id, sched);
@@ -305,10 +322,18 @@ export async function GET(req: NextRequest) {
     const professionals: SettingsProfessional[] = profsRows.map((prof) => {
       const profId = String(prof.id);
       const sched = scheduleByProf.get(profId);
+      const primaryUnitId = (prof.unit_id as string | null) ?? null;
+      const unitIds = Array.from(
+        new Set([
+          ...(primaryUnitId ? [primaryUnitId] : []),
+          ...(unitsByProf.get(profId) ?? []),
+        ])
+      );
       return {
         id: profId,
         organization_id: String(prof.organization_id),
-        unit_id: (prof.unit_id as string | null) ?? null,
+        unit_id: primaryUnitId,
+        unit_ids: unitIds,
         user_id: (prof.user_id as string | null) ?? null,
         name: String(prof.name ?? ''),
         email: (prof.email as string | null) ?? null,
@@ -354,6 +379,7 @@ export async function GET(req: NextRequest) {
 
     const response = NextResponse.json({
       organization: context.organization,
+      organizations: context.organizations,
       currentUserId: session.user.id,
       role: context.role,
       isAdmin: true,
@@ -429,7 +455,8 @@ export async function PATCH(req: NextRequest) {
   const { context } = await resolveAgendaAccessContext(
     supabase,
     session.user.id,
-    session.user.email
+    session.user.email,
+    session.activeOrganizationId
   );
 
   if (!context || !context.isAdmin) {

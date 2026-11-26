@@ -5,12 +5,14 @@ import {
   buildZonedIso,
   getZonedParts,
 } from '@/lib/agenda/constants';
+import { insertOrganizationWithFallback } from '@/lib/agenda/org-helpers';
 import {
   isMissingAgendaTableError,
   resolveAgendaAccessContext,
 } from '@/lib/agenda/permissions';
 import {
   getAuthenticatedSession,
+  setActiveOrganizationCookie,
   setSessionCookies,
   verifySameOrigin,
 } from '@/lib/auth/session';
@@ -53,6 +55,7 @@ export async function POST(req: NextRequest) {
       ? body.clinicName.trim().slice(0, 120)
       : session.user.name || 'Minha Clínica';
   const seedStarterTeam = Boolean(body.seedStarterTeam);
+  const createNewClinic = Boolean(body.createNewClinic);
 
   const supabase = createSupabaseServerClient(session.accessToken);
 
@@ -60,7 +63,8 @@ export async function POST(req: NextRequest) {
     const { context, migrationPending } = await resolveAgendaAccessContext(
       supabase,
       session.user.id,
-      session.user.email
+      session.user.email,
+      session.activeOrganizationId
     );
 
     if (migrationPending) {
@@ -73,18 +77,17 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    let org = context?.organization ?? null;
+    let org = createNewClinic ? null : context?.organization ?? null;
 
     if (!org) {
-      const { data: createdOrg, error: orgError } = await supabase
-        .from('organizations')
-        .insert({
-          owner_user_id: session.user.id,
+      const { organization: createdOrg, error: orgError } =
+        await insertOrganizationWithFallback(supabase, {
+          ownerUserId: session.user.id,
           name: clinicName,
           timezone: 'America/Sao_Paulo',
-        })
-        .select('id, owner_user_id, name, timezone')
-        .single();
+          displayName: session.user.name || 'Administrador',
+          email: session.user.email,
+        });
 
       if (orgError || !createdOrg) {
         if (isMissingAgendaTableError(orgError)) {
@@ -96,21 +99,18 @@ export async function POST(req: NextRequest) {
             { status: 404 }
           );
         }
+        const detail = orgError?.message
+          ? ` ([organizations:${orgError.code ?? 'ERR'}] ${orgError.message})`
+          : '';
         return NextResponse.json(
-          { error: 'Não foi possível criar a organização clínica.' },
+          {
+            error: `Não foi possível criar a organização clínica.${detail}`,
+          },
           { status: 502 }
         );
       }
 
       org = createdOrg;
-
-      await supabase.from('organization_members').insert({
-        organization_id: org.id,
-        user_id: session.user.id,
-        role: 'admin',
-        display_name: session.user.name || 'Administrador',
-        email: session.user.email,
-      });
     }
 
     // Ensure at least 1 unit exists
@@ -170,7 +170,6 @@ export async function POST(req: NextRequest) {
     }
 
     if (seedStarterTeam) {
-      // Respect user plan limits
       let planSlug = isValidPlanSlug(session.user.plan_slug)
         ? session.user.plan_slug
         : 'free';
@@ -243,6 +242,16 @@ export async function POST(req: NextRequest) {
 
           if (!createdProf) continue;
 
+          if (defaultUnitId) {
+            await supabase
+              .from('professional_units')
+              .insert({
+                professional_id: createdProf.id,
+                unit_id: defaultUnitId,
+              })
+              .then(() => undefined, () => undefined);
+          }
+
           const matchedSpec = specs.find((s) => s.name === prof.specialty);
           if (matchedSpec) {
             await supabase.from('professional_specialties').insert({
@@ -270,7 +279,6 @@ export async function POST(req: NextRequest) {
               specName: prof.specialty,
             });
 
-            // Mon-Fri 08:00-18:00 with lunch 12:00-13:00
             const rules = [1, 2, 3, 4, 5].map((day) => ({
               organization_id: org!.id,
               schedule_id: createdSchedule.id,
@@ -285,7 +293,6 @@ export async function POST(req: NextRequest) {
           }
         }
 
-        // Seed patients respecting max_patients
         const { data: existingPatients } = await supabase
           .from('patients')
           .select('id')
@@ -318,7 +325,6 @@ export async function POST(req: NextRequest) {
           seededPatients = [...seededPatients, ...(insertedPatients ?? [])];
         }
 
-        // Seed lunch block ("Clínica fechada" 12:00-13:00) and initial appointments for today/this week
         const todayZoned = getZonedParts(new Date(), org.timezone);
         const { data: servicesList } = await supabase
           .from('services')
@@ -386,7 +392,12 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    const response = NextResponse.json({ ok: true, organizationId: org.id });
+    const response = NextResponse.json({
+      ok: true,
+      organizationId: org.id,
+      organization: org,
+    });
+    setActiveOrganizationCookie(response, req, org.id);
     if (session.refreshed) {
       setSessionCookies(
         response,
@@ -396,9 +407,14 @@ export async function POST(req: NextRequest) {
       );
     }
     return response;
-  } catch {
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : '';
     return NextResponse.json(
-      { error: 'Erro ao inicializar a estrutura da clínica no Supabase.' },
+      {
+        error: detail
+          ? `Erro ao inicializar a estrutura da clínica no Supabase (${detail}).`
+          : 'Erro ao inicializar a estrutura da clínica no Supabase.',
+      },
       { status: 502 }
     );
   }

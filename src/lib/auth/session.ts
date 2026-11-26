@@ -7,6 +7,7 @@ import type { AuthUser } from '@/types/supabase';
 
 export const ACCESS_TOKEN_COOKIE = 'iatris_sb_access_token';
 export const REFRESH_TOKEN_COOKIE = 'iatris_sb_refresh_token';
+export const ACTIVE_ORG_COOKIE = 'iatris_active_org_id';
 
 function isHttpsRequest(req: NextRequest): boolean {
   const forwardedProto = req.headers.get('x-forwarded-proto');
@@ -87,11 +88,35 @@ export function setSessionCookies(
   }
 }
 
+export function setActiveOrganizationCookie(
+  res: NextResponse,
+  req: NextRequest,
+  organizationId: string
+): void {
+  const secure = isHttpsRequest(req);
+  const sameSite = secure ? ('none' as const) : ('lax' as const);
+
+  res.cookies.set({
+    name: ACTIVE_ORG_COOKIE,
+    value: organizationId,
+    httpOnly: true,
+    secure,
+    sameSite,
+    ...(secure ? { partitioned: true } : {}),
+    path: '/',
+    maxAge: 60 * 60 * 24 * 30,
+  });
+}
+
 export function clearSessionCookies(res: NextResponse, req: NextRequest): void {
   const secure = isHttpsRequest(req);
   const sameSite = secure ? ('none' as const) : ('lax' as const);
 
-  for (const name of [ACCESS_TOKEN_COOKIE, REFRESH_TOKEN_COOKIE]) {
+  for (const name of [
+    ACCESS_TOKEN_COOKIE,
+    REFRESH_TOKEN_COOKIE,
+    ACTIVE_ORG_COOKIE,
+  ]) {
     res.cookies.set({
       name,
       value: '',
@@ -109,6 +134,7 @@ export interface AuthenticatedSession {
   user: AuthUser;
   accessToken: string;
   refreshToken?: string;
+  activeOrganizationId?: string | null;
   refreshed: boolean;
 }
 
@@ -121,6 +147,8 @@ export async function getAuthenticatedSession(
 
   const accessToken = req.cookies.get(ACCESS_TOKEN_COOKIE)?.value;
   const refreshToken = req.cookies.get(REFRESH_TOKEN_COOKIE)?.value;
+  const activeOrganizationId =
+    req.cookies.get(ACTIVE_ORG_COOKIE)?.value?.trim() || null;
 
   if (!accessToken && !refreshToken) {
     return null;
@@ -148,6 +176,7 @@ export async function getAuthenticatedSession(
         },
         accessToken,
         refreshToken,
+        activeOrganizationId,
         refreshed: false,
       };
     }
@@ -176,6 +205,7 @@ export async function getAuthenticatedSession(
         },
         accessToken: data.session.access_token,
         refreshToken: data.session.refresh_token,
+        activeOrganizationId,
         refreshed: true,
       };
     }

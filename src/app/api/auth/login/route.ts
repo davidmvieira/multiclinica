@@ -64,10 +64,37 @@ export async function POST(req: NextRequest) {
     });
 
     if (error || !data.session || !data.user) {
+      const code = (error as { code?: string } | null)?.code ?? '';
+      const rawMsg = (error?.message ?? '').toLowerCase();
+
+      if (
+        code === 'email_not_confirmed' ||
+        rawMsg.includes('email not confirmed')
+      ) {
+        return NextResponse.json(
+          {
+            error:
+              'Esta conta ainda aguarda confirmação de e-mail no Supabase. Como o envio de e-mail não está ativo, use "Esqueci minha senha" abaixo para confirmar e definir sua senha diretamente.',
+            code: 'EMAIL_NOT_CONFIRMED',
+          },
+          { status: 403 }
+        );
+      }
+
       return NextResponse.json(
         { error: 'E-mail ou senha incorretos.' },
         { status: 401 }
       );
+    }
+
+    // Reivindica vínculos pendentes em organization_members, professionals e schedule_managers
+    try {
+      const authedSupabase = createSupabaseServerClient(
+        data.session.access_token
+      );
+      await authedSupabase.rpc('claim_pending_org_memberships');
+    } catch {
+      // Non-blocking if migration SQL has not been applied yet
     }
 
     const metadataName =

@@ -98,6 +98,9 @@ export default function SettingsWorkspace() {
   const [confirmLoading, setConfirmLoading] = useState(false);
   const [togglingId, setTogglingId] = useState<string | null>(null);
   const [copiedSettingsSql, setCopiedSettingsSql] = useState(false);
+  const [copiedSection6Sql, setCopiedSection6Sql] = useState(false);
+  const [newClinicName, setNewClinicName] = useState('');
+  const [creatingClinic, setCreatingClinic] = useState(false);
 
   const loadSettings = useCallback(
     async (customNotice?: string) => {
@@ -152,6 +155,13 @@ export default function SettingsWorkspace() {
 
   useEffect(() => {
     void loadSettings();
+    const handleOrgChanged = () => {
+      void loadSettings();
+    };
+    window.addEventListener('iatris:org-changed', handleOrgChanged);
+    return () => {
+      window.removeEventListener('iatris:org-changed', handleOrgChanged);
+    };
   }, [loadSettings]);
 
   const unitMap = useMemo(() => {
@@ -197,8 +207,17 @@ export default function SettingsWorkspace() {
     const q = profSearch.trim().toLowerCase();
     return (payload?.professionals ?? []).filter((p) => {
       if (profUnitFilter !== 'all') {
-        if (profUnitFilter === 'none' && p.unit_id !== null) return false;
-        if (profUnitFilter !== 'none' && p.unit_id !== profUnitFilter) {
+        const profUnitIds =
+          p.unit_ids && p.unit_ids.length > 0
+            ? p.unit_ids
+            : p.unit_id
+              ? [p.unit_id]
+              : [];
+        if (profUnitFilter === 'none' && profUnitIds.length > 0) return false;
+        if (
+          profUnitFilter !== 'none' &&
+          !profUnitIds.includes(profUnitFilter)
+        ) {
           return false;
         }
       }
@@ -247,6 +266,59 @@ export default function SettingsWorkspace() {
       setTimeout(() => setCopiedSettingsSql(false), 3000);
     } catch {
       setError('Não foi possível copiar o script SQL automaticamente.');
+    }
+  }
+
+  async function handleCopySection6Sql() {
+    try {
+      const res = await fetch('/api/settings/sql?section=6');
+      const data = await res.json();
+      if (!res.ok || !data.sql) {
+        setError('Consulte a Seção 6 do arquivo sql.md no repositório.');
+        return;
+      }
+      await navigator.clipboard.writeText(data.sql);
+      setCopiedSection6Sql(true);
+      setTimeout(() => setCopiedSection6Sql(false), 3000);
+    } catch {
+      setError('Não foi possível copiar o script SQL da Seção 6.');
+    }
+  }
+
+  async function handleCreateNewClinic(e: React.FormEvent) {
+    e.preventDefault();
+    setError(null);
+    setNotice(null);
+    const trimmed = newClinicName.trim();
+    if (trimmed.length < 2) {
+      setError('Informe o nome da nova clínica (pelo menos 2 caracteres).');
+      return;
+    }
+
+    setCreatingClinic(true);
+    try {
+      const res = await fetch('/api/agenda/bootstrap', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          clinicName: trimmed,
+          seedStarterTeam: false,
+          createNewClinic: true,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setError(data.error ?? 'Não foi possível criar a nova clínica.');
+        return;
+      }
+      setNewClinicName('');
+      window.dispatchEvent(new CustomEvent('iatris:org-changed'));
+      router.refresh();
+      await loadSettings(`Nova clínica "${trimmed}" criada e selecionada.`);
+    } catch {
+      setError('Falha de conexão ao criar nova clínica.');
+    } finally {
+      setCreatingClinic(false);
     }
   }
 
@@ -1063,9 +1135,15 @@ export default function SettingsWorkspace() {
                   </thead>
                   <tbody className="divide-y divide-slate-100">
                     {filteredProfessionals.map((prof) => {
-                      const unit = prof.unit_id
-                        ? unitMap.get(prof.unit_id)
-                        : null;
+                      const profUnitIds =
+                        prof.unit_ids && prof.unit_ids.length > 0
+                          ? prof.unit_ids
+                          : prof.unit_id
+                            ? [prof.unit_id]
+                            : [];
+                      const unitNames = profUnitIds
+                        .map((uid) => unitMap.get(uid)?.name)
+                        .filter(Boolean) as string[];
                       const linkedMember = prof.user_id
                         ? memberByUserId.get(prof.user_id)
                         : null;
@@ -1102,8 +1180,10 @@ export default function SettingsWorkspace() {
                               ? specNames.join(' · ')
                               : 'Não definida'}
                           </td>
-                          <td className="px-4 py-3 text-slate-600 whitespace-nowrap">
-                            {unit ? unit.name : 'Sem unidade fixa'}
+                          <td className="px-4 py-3 text-xs text-slate-600">
+                            {unitNames.length > 0
+                              ? unitNames.join(' · ')
+                              : 'Sem unidade fixa'}
                           </td>
                           <td className="px-4 py-3 text-right font-mono text-xs text-slate-700 tabular-nums whitespace-nowrap">
                             {prof.schedule?.slot_duration_minutes ?? 60} min
@@ -1231,7 +1311,9 @@ export default function SettingsWorkspace() {
                   <tbody className="divide-y divide-slate-100">
                     {filteredUnits.map((unit) => {
                       const profCount = (payload?.professionals ?? []).filter(
-                        (p) => p.unit_id === unit.id
+                        (p) =>
+                          p.unit_id === unit.id ||
+                          (p.unit_ids?.includes(unit.id) ?? false)
                       ).length;
                       const memberCount = (payload?.members ?? []).filter(
                         (m) => m.unit_id === unit.id
@@ -1398,6 +1480,101 @@ export default function SettingsWorkspace() {
               </section>
             )}
 
+            <section className="rounded-xl border border-slate-200 bg-white p-6">
+              <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <h2 className="text-base font-bold text-slate-900">
+                    Criar nova clínica
+                  </h2>
+                  <p className="mt-0.5 text-xs text-slate-500">
+                    Crie uma nova clínica independente com você como
+                    administrador e alterne pelo seletor no topo da tela.
+                  </p>
+                </div>
+                {payload?.organizations && payload.organizations.length > 1 && (
+                  <span className="font-mono text-xs text-slate-500 tabular-nums">
+                    {payload.organizations.length} clínicas vinculadas
+                  </span>
+                )}
+              </div>
+
+              <form
+                onSubmit={handleCreateNewClinic}
+                className="grid gap-4 sm:grid-cols-12 sm:items-end"
+              >
+                <div className="sm:col-span-9">
+                  <label
+                    htmlFor="new-clinic-name"
+                    className="block text-sm font-medium text-slate-700"
+                  >
+                    Nome da nova clínica
+                  </label>
+                  <input
+                    id="new-clinic-name"
+                    type="text"
+                    required
+                    maxLength={120}
+                    value={newClinicName}
+                    onChange={(e) => setNewClinicName(e.target.value)}
+                    placeholder="Ex.: Instituto Iatris Jardins"
+                    className="mt-1.5 h-10 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-900 outline-none focus:border-emerald-600"
+                  />
+                </div>
+                <div className="sm:col-span-3">
+                  <button
+                    type="submit"
+                    disabled={creatingClinic}
+                    className="inline-flex h-10 w-full cursor-pointer items-center justify-center gap-1.5 rounded-lg bg-emerald-600 px-4 text-sm font-semibold text-white transition-colors hover:bg-emerald-700 disabled:opacity-60 whitespace-nowrap"
+                  >
+                    <Plus className="h-4 w-4" aria-hidden="true" />
+                    {creatingClinic ? 'Criando...' : 'Criar clínica'}
+                  </button>
+                </div>
+              </form>
+            </section>
+
+            {isAdmin && (
+              <section className="flex flex-col gap-3 rounded-xl border border-slate-200 bg-slate-50/70 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+                <div className="flex items-start gap-2.5 text-sm text-slate-800">
+                  <Database
+                    className="mt-0.5 h-4 w-4 shrink-0 text-emerald-700"
+                    aria-hidden="true"
+                  />
+                  <div>
+                    <p className="font-semibold text-slate-900">
+                      Script SQL de multiclínica, multiunidade e redefinição de
+                      senha (Seção 6)
+                    </p>
+                    <p className="mt-0.5 text-xs text-slate-600">
+                      Execute a Seção 6 no SQL Editor do Supabase para habilitar
+                      múltiplas unidades por profissional, confirmação automática
+                      de usuários cadastrados e redefinição direta de senha.
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => void handleCopySection6Sql()}
+                  className="inline-flex h-9 cursor-pointer items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 text-xs font-semibold text-slate-800 hover:bg-slate-50 whitespace-nowrap shrink-0"
+                >
+                  {copiedSection6Sql ? (
+                    <>
+                      <Check
+                        className="h-3.5 w-3.5 text-emerald-600"
+                        aria-hidden="true"
+                      />
+                      SQL copiado
+                    </>
+                  ) : (
+                    <>
+                      <Copy className="h-3.5 w-3.5" aria-hidden="true" />
+                      Copiar SQL da Seção 6
+                    </>
+                  )}
+                </button>
+              </section>
+            )}
+
             <PlanSettingsPanel embedded />
           </div>
         )}
@@ -1425,6 +1602,7 @@ export default function SettingsWorkspace() {
           units={payload.units}
           specialties={payload.specialties}
           members={payload.members}
+          canManageAdmins={canManageAdmins}
           onClose={() => {
             setProfModalOpen(false);
             setEditingProf(null);
