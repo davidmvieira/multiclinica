@@ -453,6 +453,30 @@ alter table public.patients add column if not exists phone text;
 alter table public.patients add column if not exists email text;
 alter table public.patients add column if not exists created_at timestamptz not null default now();
 
+do $$
+begin
+  if exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public' and table_name = 'patients' and column_name = 'full_name'
+  ) then
+    execute 'update public.patients set name = full_name where (name is null or name = ''Paciente'') and full_name is not null';
+    execute $fn$
+      create or replace function public.sync_patients_name_fields()
+      returns trigger
+      language plpgsql
+      as $trg$
+      begin
+        new.name := coalesce(nullif(trim(new.name), ''), new.full_name, 'Paciente');
+        new.full_name := coalesce(nullif(trim(new.full_name), ''), new.name);
+        return new;
+      end;
+      $trg$;
+    $fn$;
+    execute 'drop trigger if exists trg_sync_patients_name on public.patients';
+    execute 'create trigger trg_sync_patients_name before insert or update on public.patients for each row execute function public.sync_patients_name_fields()';
+  end if;
+end $$;
+
 create table if not exists public.services (
   id uuid primary key default gen_random_uuid(),
   organization_id uuid references public.organizations(id) on delete cascade not null,
@@ -604,6 +628,35 @@ alter table public.services enable row level security;
 alter table public.appointments enable row level security;
 alter table public.appointment_audit_logs enable row level security;
 
+do $$
+declare
+  pol record;
+begin
+  for pol in
+    select schemaname, tablename, policyname
+    from pg_policies
+    where schemaname = 'public'
+      and tablename in (
+        'organizations',
+        'units',
+        'organization_members',
+        'specialties',
+        'professionals',
+        'professional_specialties',
+        'schedules',
+        'schedule_managers',
+        'availability_rules',
+        'schedule_blocks',
+        'patients',
+        'services',
+        'appointments',
+        'appointment_audit_logs'
+      )
+  loop
+    execute format('drop policy if exists %I on %I.%I', pol.policyname, pol.schemaname, pol.tablename);
+  end loop;
+end $$;
+
 drop policy if exists "Org members can select organization" on public.organizations;
 create policy "Org members can select organization" on public.organizations for select using (public.is_org_member(id));
 drop policy if exists "Users can create own organization" on public.organizations;
@@ -677,5 +730,635 @@ drop policy if exists "Authorized users can view audit logs" on public.appointme
 create policy "Authorized users can view audit logs" on public.appointment_audit_logs for select using (public.is_org_admin(organization_id) or (schedule_id is not null and public.can_operate_schedule(schedule_id, 'view')));
 drop policy if exists "Org members can insert audit logs" on public.appointment_audit_logs;
 create policy "Org members can insert audit logs" on public.appointment_audit_logs for insert with check (public.is_org_member(organization_id));
+
+notify pgrst, 'reload schema';
 ```
+
+---
+
+## 4. Massa completa de dados para teste (`/dashboard` e `/agenda`)
+
+Cria um cadastro completo vinculado ao usuário autenticado em `auth.users` (plano `pro`, clínica, 2 unidades, 4 especialidades, 4 serviços, 4 profissionais com agendas independentes, jornada semanal seg–sex, gestor delegado, 6 pacientes, bloqueio recorrente `Clínica fechada` 12:00–13:00, bloqueio pontual e agendamentos distribuídos na semana atual).
+
+> Execute após rodar as seções **1, 2 e 3**. Caso utilize outro e-mail de login, altere `v_target_email` na primeira linha do bloco `do $$`.
+
+```sql
+do $$
+declare
+  v_target_email text := 'manguera.david@gmail.com';
+  v_user_id uuid;
+  v_user_email text;
+  v_org_id uuid;
+  v_unit_matriz uuid;
+  v_unit_jardins uuid;
+
+  v_spec_fisio uuid;
+  v_spec_nutri uuid;
+  v_spec_estetica uuid;
+  v_spec_psico uuid;
+
+  v_svc_fisio uuid;
+  v_svc_nutri uuid;
+  v_svc_estetica uuid;
+  v_svc_psico uuid;
+
+  v_prof_camila uuid;
+  v_prof_bruno uuid;
+  v_prof_leticia uuid;
+  v_prof_thiago uuid;
+
+  v_sched_camila uuid;
+  v_sched_bruno uuid;
+  v_sched_leticia uuid;
+  v_sched_thiago uuid;
+
+  v_pat_sofia uuid;
+  v_pat_ricardo uuid;
+  v_pat_maria uuid;
+  v_pat_pedro uuid;
+  v_pat_beatriz uuid;
+  v_pat_gabriel uuid;
+
+  v_appt_id uuid;
+  v_monday date;
+  v_day integer;
+begin
+  -- 1. Localizar usuário em auth.users
+  select id, email
+    into v_user_id, v_user_email
+  from auth.users
+  where lower(email) = lower(v_target_email)
+  limit 1;
+
+  if v_user_id is null then
+    select id, email
+      into v_user_id, v_user_email
+    from auth.users
+    order by created_at asc
+    limit 1;
+  end if;
+
+  if v_user_id is null then
+    raise exception 'Nenhum usuário encontrado em auth.users. Crie uma conta em /login antes de executar o seed.';
+  end if;
+
+  -- Compatibilidade com tabela public.patients legada que possua full_name NOT NULL
+  if exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public' and table_name = 'patients' and column_name = 'full_name'
+  ) then
+    execute 'update public.patients set name = full_name where (name is null or name = ''Paciente'') and full_name is not null';
+    execute $fn$
+      create or replace function public.sync_patients_name_fields()
+      returns trigger
+      language plpgsql
+      as $trg$
+      begin
+        new.name := coalesce(nullif(trim(new.name), ''), new.full_name, 'Paciente');
+        new.full_name := coalesce(nullif(trim(new.full_name), ''), new.name);
+        return new;
+      end;
+      $trg$;
+    $fn$;
+    execute 'drop trigger if exists trg_sync_patients_name on public.patients';
+    execute 'create trigger trg_sync_patients_name before insert or update on public.patients for each row execute function public.sync_patients_name_fields()';
+  end if;
+
+  -- 2. Garantir assinatura no plano Pro (até 5 profissionais e 50 pacientes) para testar múltiplas agendas
+  if exists (select 1 from public.plans where slug = 'pro') then
+    insert into public.subscriptions (user_id, plan_slug, account_name, status)
+    values (v_user_id, 'pro', 'Clínica Iatris Multiprofissional', 'active')
+    on conflict (user_id) do update
+      set plan_slug = 'pro',
+          status = 'active',
+          updated_at = now();
+  end if;
+
+  -- 3. Criar ou reutilizar organização do usuário
+  select id into v_org_id
+  from public.organizations
+  where owner_user_id = v_user_id
+  order by created_at asc
+  limit 1;
+
+  if v_org_id is null then
+    if exists (
+      select 1 from information_schema.columns
+      where table_schema = 'public' and table_name = 'organizations' and column_name = 'slug'
+    ) then
+      execute 'insert into public.organizations (owner_user_id, name, slug, timezone) values ($1, $2, $3, $4) returning id'
+        into v_org_id
+        using v_user_id, 'Clínica Iatris Multiprofissional', 'clinica-iatris-' || left(v_user_id::text, 8), 'America/Sao_Paulo';
+    else
+      insert into public.organizations (owner_user_id, name, timezone)
+      values (v_user_id, 'Clínica Iatris Multiprofissional', 'America/Sao_Paulo')
+      returning id into v_org_id;
+    end if;
+  end if;
+
+  -- 4. Unidades
+  select id into v_unit_matriz
+  from public.units
+  where organization_id = v_org_id and name = 'Unidade Matriz'
+  limit 1;
+
+  if v_unit_matriz is null then
+    insert into public.units (organization_id, name, address, timezone, is_active)
+    values (v_org_id, 'Unidade Matriz', 'Av. Paulista, 1200 — Bela Vista', 'America/Sao_Paulo', true)
+    returning id into v_unit_matriz;
+  end if;
+
+  select id into v_unit_jardins
+  from public.units
+  where organization_id = v_org_id and name = 'Unidade Jardins'
+  limit 1;
+
+  if v_unit_jardins is null then
+    insert into public.units (organization_id, name, address, timezone, is_active)
+    values (v_org_id, 'Unidade Jardins', 'Rua Oscar Freire, 450 — Jardins', 'America/Sao_Paulo', true)
+    returning id into v_unit_jardins;
+  end if;
+
+  -- 5. Vincular usuário como administrador da organização
+  insert into public.organization_members (organization_id, user_id, unit_id, role, display_name, email)
+  values (v_org_id, v_user_id, v_unit_matriz, 'admin', 'Administrador da Clínica', v_user_email)
+  on conflict (organization_id, user_id) do update
+    set role = 'admin',
+        unit_id = excluded.unit_id,
+        email = excluded.email;
+
+  -- 6. Especialidades
+  insert into public.specialties (organization_id, name, color)
+  values (v_org_id, 'Fisioterapia', '#059669')
+  on conflict (organization_id, name) do update set color = excluded.color
+  returning id into v_spec_fisio;
+
+  insert into public.specialties (organization_id, name, color)
+  values (v_org_id, 'Nutrição', '#0284C7')
+  on conflict (organization_id, name) do update set color = excluded.color
+  returning id into v_spec_nutri;
+
+  insert into public.specialties (organization_id, name, color)
+  values (v_org_id, 'Estética', '#D97706')
+  on conflict (organization_id, name) do update set color = excluded.color
+  returning id into v_spec_estetica;
+
+  insert into public.specialties (organization_id, name, color)
+  values (v_org_id, 'Psicologia', '#7C3AED')
+  on conflict (organization_id, name) do update set color = excluded.color
+  returning id into v_spec_psico;
+
+  -- 7. Serviços / Procedimentos
+  if not exists (select 1 from public.services where organization_id = v_org_id) then
+    insert into public.services (organization_id, specialty_id, name, duration_minutes, is_active)
+    values (v_org_id, v_spec_fisio, 'Sessão de Fisioterapia', 60, true)
+    returning id into v_svc_fisio;
+
+    insert into public.services (organization_id, specialty_id, name, duration_minutes, is_active)
+    values (v_org_id, v_spec_nutri, 'Consulta Nutricional', 60, true)
+    returning id into v_svc_nutri;
+
+    insert into public.services (organization_id, specialty_id, name, duration_minutes, is_active)
+    values (v_org_id, v_spec_estetica, 'Procedimento Estético', 60, true)
+    returning id into v_svc_estetica;
+
+    insert into public.services (organization_id, specialty_id, name, duration_minutes, is_active)
+    values (v_org_id, v_spec_psico, 'Sessão de Psicoterapia', 50, true)
+    returning id into v_svc_psico;
+  else
+    select id into v_svc_fisio from public.services where organization_id = v_org_id and specialty_id = v_spec_fisio limit 1;
+    select id into v_svc_nutri from public.services where organization_id = v_org_id and specialty_id = v_spec_nutri limit 1;
+    select id into v_svc_estetica from public.services where organization_id = v_org_id and specialty_id = v_spec_estetica limit 1;
+    select id into v_svc_psico from public.services where organization_id = v_org_id and specialty_id = v_spec_psico limit 1;
+  end if;
+
+  -- 8. Profissionais + Agendas Independentes + Disponibilidade + Gestor Delegado (se ainda não existirem)
+  if not exists (select 1 from public.professionals where organization_id = v_org_id) then
+    insert into public.professionals (organization_id, unit_id, user_id, name, email, color, is_active)
+    values (v_org_id, v_unit_matriz, v_user_id, 'Dra. Camila Mendes', v_user_email, '#059669', true)
+    returning id into v_prof_camila;
+
+    insert into public.professionals (organization_id, unit_id, user_id, name, email, color, is_active)
+    values (v_org_id, v_unit_matriz, null, 'Dr. Bruno Cardoso', 'bruno.nutri@clinica.local', '#0284C7', true)
+    returning id into v_prof_bruno;
+
+    insert into public.professionals (organization_id, unit_id, user_id, name, email, color, is_active)
+    values (v_org_id, v_unit_jardins, null, 'Dra. Letícia Souza', 'leticia.estetica@clinica.local', '#D97706', true)
+    returning id into v_prof_leticia;
+
+    insert into public.professionals (organization_id, unit_id, user_id, name, email, color, is_active)
+    values (v_org_id, v_unit_matriz, null, 'Dr. Thiago Barbosa', 'thiago.psico@clinica.local', '#7C3AED', true)
+    returning id into v_prof_thiago;
+
+    -- Vínculo profissional <-> especialidades (Dra. Camila atua em 2 especialidades)
+    insert into public.professional_specialties (professional_id, specialty_id)
+    values
+      (v_prof_camila, v_spec_fisio),
+      (v_prof_camila, v_spec_estetica),
+      (v_prof_bruno, v_spec_nutri),
+      (v_prof_leticia, v_spec_estetica),
+      (v_prof_thiago, v_spec_psico)
+    on conflict do nothing;
+
+    -- Agendas independentes
+    insert into public.schedules (organization_id, unit_id, professional_id, name, slot_duration_minutes, is_active)
+    values (v_org_id, v_unit_matriz, v_prof_camila, 'Agenda — Dra. Camila Mendes', 60, true)
+    returning id into v_sched_camila;
+
+    insert into public.schedules (organization_id, unit_id, professional_id, name, slot_duration_minutes, is_active)
+    values (v_org_id, v_unit_matriz, v_prof_bruno, 'Agenda — Dr. Bruno Cardoso', 60, true)
+    returning id into v_sched_bruno;
+
+    insert into public.schedules (organization_id, unit_id, professional_id, name, slot_duration_minutes, is_active)
+    values (v_org_id, v_unit_jardins, v_prof_leticia, 'Agenda — Dra. Letícia Souza', 60, true)
+    returning id into v_sched_leticia;
+
+    insert into public.schedules (organization_id, unit_id, professional_id, name, slot_duration_minutes, is_active)
+    values (v_org_id, v_unit_matriz, v_prof_thiago, 'Agenda — Dr. Thiago Barbosa', 50, true)
+    returning id into v_sched_thiago;
+
+    -- Disponibilidade semanal (segunda a sexta 08:00-18:00 com intervalo 12:00-13:00)
+    for v_day in 1..5 loop
+      insert into public.availability_rules (organization_id, schedule_id, day_of_week, start_time, end_time, break_start, break_end, is_active)
+      values
+        (v_org_id, v_sched_camila,  v_day, '08:00', '18:00', '12:00', '13:00', true),
+        (v_org_id, v_sched_bruno,   v_day, '08:00', '18:00', '12:00', '13:00', true),
+        (v_org_id, v_sched_leticia, v_day, '09:00', '18:00', '12:00', '13:00', true),
+        (v_org_id, v_sched_thiago,  v_day, '08:00', '17:00', '12:00', '13:00', true)
+      on conflict (schedule_id, day_of_week) do nothing;
+    end loop;
+
+    -- Gestão compartilhada (Recepção com permissão de visualizar e agendar)
+    insert into public.schedule_managers (
+      organization_id, schedule_id, manager_name, manager_email, role,
+      can_view, can_manage_appointments, can_manage_availability, can_manage_blocks
+    )
+    values
+      (v_org_id, v_sched_camila, 'Recepção Central', 'recepcao@clinica.local', 'reception', true, true, false, false),
+      (v_org_id, v_sched_bruno,  'Recepção Central', 'recepcao@clinica.local', 'reception', true, true, false, false),
+      (v_org_id, v_sched_leticia,'Recepção Central', 'recepcao@clinica.local', 'reception', true, true, false, false)
+    on conflict (schedule_id, manager_email) do nothing;
+
+    -- 9. Pacientes de teste
+    insert into public.patients (organization_id, name, phone, email)
+    values (v_org_id, 'Sofia Lima', '(11) 99123-4501', 'sofia.lima@teste.local')
+    returning id into v_pat_sofia;
+
+    insert into public.patients (organization_id, name, phone, email)
+    values (v_org_id, 'Ricardo Moreira', '(11) 99234-5602', 'ricardo.moreira@teste.local')
+    returning id into v_pat_ricardo;
+
+    insert into public.patients (organization_id, name, phone, email)
+    values (v_org_id, 'Maria Santos', '(11) 99345-6703', 'maria.santos@teste.local')
+    returning id into v_pat_maria;
+
+    insert into public.patients (organization_id, name, phone, email)
+    values (v_org_id, 'Pedro Ferreira', '(11) 99456-7804', 'pedro.ferreira@teste.local')
+    returning id into v_pat_pedro;
+
+    insert into public.patients (organization_id, name, phone, email)
+    values (v_org_id, 'Beatriz Campos', '(11) 99567-8905', 'beatriz.campos@teste.local')
+    returning id into v_pat_beatriz;
+
+    insert into public.patients (organization_id, name, phone, email)
+    values (v_org_id, 'Gabriel Oliveira', '(11) 99678-9006', 'gabriel.oliveira@teste.local')
+    returning id into v_pat_gabriel;
+
+    -- 10. Bloqueios (Clínica fechada recorrente 12:00-13:00 + Reunião clínica na quarta)
+    v_monday := date_trunc('week', (now() at time zone 'America/Sao_Paulo'))::date;
+
+    insert into public.schedule_blocks (
+      organization_id, unit_id, schedule_id, title, reason, starts_at, ends_at, is_recurring, created_by
+    )
+    values (
+      v_org_id,
+      v_unit_matriz,
+      null,
+      'Clínica fechada',
+      'Intervalo de almoço',
+      ((v_monday + time '12:00') at time zone 'America/Sao_Paulo'),
+      ((v_monday + time '13:00') at time zone 'America/Sao_Paulo'),
+      true,
+      v_user_id
+    );
+
+    insert into public.schedule_blocks (
+      organization_id, unit_id, schedule_id, title, reason, starts_at, ends_at, is_recurring, created_by
+    )
+    values (
+      v_org_id,
+      v_unit_matriz,
+      v_sched_bruno,
+      'Reunião clínica',
+      'Alinhamento multidisciplinar',
+      (((v_monday + 2) + time '11:00') at time zone 'America/Sao_Paulo'),
+      (((v_monday + 2) + time '12:00') at time zone 'America/Sao_Paulo'),
+      false,
+      v_user_id
+    );
+
+    -- 11. Agendamentos distribuídos na semana atual (segunda a sexta)
+    insert into public.appointments (
+      organization_id, unit_id, schedule_id, professional_id, patient_id, service_id, specialty_id,
+      starts_at, ends_at, status, is_fit_in, notes_admin, created_by, updated_by
+    )
+    values
+      -- Segunda-feira
+      (v_org_id, v_unit_matriz,  v_sched_camila,  v_prof_camila,  v_pat_sofia,   v_svc_fisio,    v_spec_fisio,
+       ((v_monday + time '08:00') at time zone 'America/Sao_Paulo'),
+       ((v_monday + time '09:00') at time zone 'America/Sao_Paulo'),
+       'confirmed', false, 'Primeira sessão da semana', v_user_id, v_user_id),
+      (v_org_id, v_unit_matriz,  v_sched_bruno,   v_prof_bruno,   v_pat_ricardo, v_svc_nutri,    v_spec_nutri,
+       ((v_monday + time '08:00') at time zone 'America/Sao_Paulo'),
+       ((v_monday + time '09:00') at time zone 'America/Sao_Paulo'),
+       'awaiting_confirmation', false, null, v_user_id, v_user_id),
+      (v_org_id, v_unit_jardins, v_sched_leticia, v_prof_leticia, v_pat_maria,   v_svc_estetica, v_spec_estetica,
+       ((v_monday + time '10:00') at time zone 'America/Sao_Paulo'),
+       ((v_monday + time '11:00') at time zone 'America/Sao_Paulo'),
+       'confirmed', false, null, v_user_id, v_user_id),
+      (v_org_id, v_unit_matriz,  v_sched_thiago,  v_prof_thiago,  v_pat_pedro,   v_svc_psico,    v_spec_psico,
+       ((v_monday + time '14:00') at time zone 'America/Sao_Paulo'),
+       ((v_monday + time '14:50') at time zone 'America/Sao_Paulo'),
+       'pending', false, 'Confirmar recepção 15 min antes', v_user_id, v_user_id),
+
+      -- Terça-feira
+      (v_org_id, v_unit_matriz,  v_sched_camila,  v_prof_camila,  v_pat_beatriz, v_svc_fisio,    v_spec_fisio,
+       (((v_monday + 1) + time '09:00') at time zone 'America/Sao_Paulo'),
+       (((v_monday + 1) + time '10:00') at time zone 'America/Sao_Paulo'),
+       'completed', false, null, v_user_id, v_user_id),
+      (v_org_id, v_unit_matriz,  v_sched_bruno,   v_prof_bruno,   v_pat_gabriel, v_svc_nutri,    v_spec_nutri,
+       (((v_monday + 1) + time '09:00') at time zone 'America/Sao_Paulo'),
+       (((v_monday + 1) + time '10:00') at time zone 'America/Sao_Paulo'),
+       'in_service', false, null, v_user_id, v_user_id),
+      (v_org_id, v_unit_matriz,  v_sched_thiago,  v_prof_thiago,  v_pat_sofia,   v_svc_psico,    v_spec_psico,
+       (((v_monday + 1) + time '15:00') at time zone 'America/Sao_Paulo'),
+       (((v_monday + 1) + time '15:50') at time zone 'America/Sao_Paulo'),
+       'awaiting_service', false, null, v_user_id, v_user_id),
+
+      -- Quarta-feira
+      (v_org_id, v_unit_matriz,  v_sched_camila,  v_prof_camila,  v_pat_maria,   v_svc_fisio,    v_spec_fisio,
+       (((v_monday + 2) + time '10:00') at time zone 'America/Sao_Paulo'),
+       (((v_monday + 2) + time '11:00') at time zone 'America/Sao_Paulo'),
+       'confirmed', false, null, v_user_id, v_user_id),
+      (v_org_id, v_unit_jardins, v_sched_leticia, v_prof_leticia, v_pat_beatriz, v_svc_estetica, v_spec_estetica,
+       (((v_monday + 2) + time '14:00') at time zone 'America/Sao_Paulo'),
+       (((v_monday + 2) + time '15:00') at time zone 'America/Sao_Paulo'),
+       'confirmed', true, 'Encaixe autorizado pela coordenação', v_user_id, v_user_id),
+
+      -- Quinta-feira
+      (v_org_id, v_unit_matriz,  v_sched_bruno,   v_prof_bruno,   v_pat_pedro,   v_svc_nutri,    v_spec_nutri,
+       (((v_monday + 3) + time '08:00') at time zone 'America/Sao_Paulo'),
+       (((v_monday + 3) + time '09:00') at time zone 'America/Sao_Paulo'),
+       'confirmed', false, null, v_user_id, v_user_id),
+      (v_org_id, v_unit_matriz,  v_sched_camila,  v_prof_camila,  v_pat_ricardo, v_svc_fisio,    v_spec_fisio,
+       (((v_monday + 3) + time '16:00') at time zone 'America/Sao_Paulo'),
+       (((v_monday + 3) + time '17:00') at time zone 'America/Sao_Paulo'),
+       'awaiting_confirmation', false, null, v_user_id, v_user_id),
+
+      -- Sexta-feira
+      (v_org_id, v_unit_jardins, v_sched_leticia, v_prof_leticia, v_pat_sofia,   v_svc_estetica, v_spec_estetica,
+       (((v_monday + 4) + time '11:00') at time zone 'America/Sao_Paulo'),
+       (((v_monday + 4) + time '12:00') at time zone 'America/Sao_Paulo'),
+       'confirmed', false, null, v_user_id, v_user_id),
+      (v_org_id, v_unit_matriz,  v_sched_thiago,  v_prof_thiago,  v_pat_gabriel, v_svc_psico,    v_spec_psico,
+       (((v_monday + 4) + time '14:00') at time zone 'America/Sao_Paulo'),
+       (((v_monday + 4) + time '14:50') at time zone 'America/Sao_Paulo'),
+       'canceled', false, 'Cancelado com aviso prévio', v_user_id, v_user_id);
+
+    -- 12. Registro inicial de auditoria
+    select id into v_appt_id
+    from public.appointments
+    where organization_id = v_org_id
+    order by starts_at asc
+    limit 1;
+
+    insert into public.appointment_audit_logs (
+      organization_id, appointment_id, schedule_id, actor_user_id, actor_email, action, new_values
+    )
+    values (
+      v_org_id,
+      v_appt_id,
+      v_sched_camila,
+      v_user_id,
+      v_user_email,
+      'create_appointment',
+      jsonb_build_object('source', 'seed_teste', 'status', 'confirmed')
+    );
+  end if;
+
+  -- 13. Tarefas iniciais de exemplo para o /dashboard
+  if exists (select 1 from information_schema.tables where table_schema = 'public' and table_name = 'todos') then
+    if not exists (select 1 from public.todos where user_id = v_user_id) then
+      insert into public.todos (user_id, title, is_complete)
+      values
+        (v_user_id, 'Confirmar retornos de Fisioterapia da semana', false),
+        (v_user_id, 'Revisar disponibilidade da Unidade Jardins', false),
+        (v_user_id, 'Validar permissões da recepção na agenda', true);
+    end if;
+  end if;
+end $$;
+```
+
+---
+
+## 5. Configurações Administrativas (Cadastro de usuários, vínculo automático e campos extras de unidades e profissionais)
+
+Atualiza `organization_members`, `units` e `professionals` para suportar gestão completa em `/configuracoes`, incluindo pré-cadastro/vínculo automático de usuários por e-mail e controle de status ativo/inativo.
+
+> Também disponível em `supabase/migrations/202611250002_admin_settings_users_units.sql`.
+
+```sql
+alter table public.organization_members alter column user_id drop not null;
+alter table public.organization_members add column if not exists phone text;
+alter table public.organization_members add column if not exists is_active boolean not null default true;
+alter table public.organization_members add column if not exists invite_status text not null default 'active';
+alter table public.organization_members add column if not exists updated_at timestamptz not null default now();
+
+create unique index if not exists uq_org_members_org_email
+  on public.organization_members (organization_id, lower(email))
+  where email is not null;
+
+alter table public.units add column if not exists phone text;
+alter table public.professionals add column if not exists phone text;
+alter table public.professionals add column if not exists council_number text;
+
+create or replace function public.is_org_member(target_org_id uuid)
+returns boolean language sql stable security definer set search_path = public as $$
+  select exists (
+    select 1 from public.organizations o
+    where o.id = target_org_id and o.owner_user_id = auth.uid()
+  )
+  or exists (
+    select 1 from public.organization_members m
+    where m.organization_id = target_org_id
+      and m.user_id = auth.uid()
+      and m.is_active is distinct from false
+  );
+$$;
+
+create or replace function public.is_org_admin(target_org_id uuid)
+returns boolean language sql stable security definer set search_path = public as $$
+  select exists (
+    select 1 from public.organizations o
+    where o.id = target_org_id and o.owner_user_id = auth.uid()
+  )
+  or exists (
+    select 1 from public.organization_members m
+    where m.organization_id = target_org_id
+      and m.user_id = auth.uid()
+      and m.is_active is distinct from false
+      and m.role in ('admin', 'unit_manager')
+  );
+$$;
+
+drop policy if exists "Org owner can update organization" on public.organizations;
+create policy "Org owner can update organization"
+  on public.organizations for update
+  using (auth.uid() = owner_user_id or public.is_org_admin(id))
+  with check (auth.uid() = owner_user_id or public.is_org_admin(id));
+
+create or replace function public.link_auth_user_to_org_member(
+  target_org_id uuid,
+  member_email text
+)
+returns boolean
+language plpgsql
+security definer
+set search_path = public, auth
+as $$
+declare
+  v_uid uuid;
+  v_clean_email text;
+begin
+  if not public.is_org_admin(target_org_id) then
+    raise exception 'Permissão negada para vincular membros nesta clínica.';
+  end if;
+
+  v_clean_email := lower(trim(coalesce(member_email, '')));
+  if v_clean_email = '' then
+    return false;
+  end if;
+
+  select id into v_uid
+  from auth.users
+  where lower(email) = v_clean_email
+  limit 1;
+
+  if v_uid is null then
+    return false;
+  end if;
+
+  update public.organization_members
+  set user_id = v_uid,
+      invite_status = 'active',
+      updated_at = now()
+  where organization_id = target_org_id
+    and lower(email) = v_clean_email
+    and user_id is null;
+
+  update public.professionals
+  set user_id = v_uid
+  where organization_id = target_org_id
+    and lower(email) = v_clean_email
+    and user_id is null;
+
+  update public.schedule_managers
+  set user_id = v_uid
+  where organization_id = target_org_id
+    and lower(manager_email) = v_clean_email
+    and user_id is null;
+
+  return true;
+end;
+$$;
+
+create or replace function public.claim_pending_org_memberships()
+returns integer
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_uid uuid;
+  v_email text;
+  v_count integer := 0;
+begin
+  v_uid := auth.uid();
+  v_email := lower(trim(coalesce(auth.jwt()->>'email', '')));
+
+  if v_uid is null or v_email = '' then
+    return 0;
+  end if;
+
+  update public.organization_members
+  set user_id = v_uid,
+      invite_status = 'active',
+      updated_at = now()
+  where lower(email) = v_email
+    and user_id is null;
+
+  get diagnostics v_count = row_count;
+
+  update public.professionals
+  set user_id = v_uid
+  where lower(email) = v_email
+    and user_id is null;
+
+  update public.schedule_managers
+  set user_id = v_uid
+  where lower(manager_email) = v_email
+    and user_id is null;
+
+  return v_count;
+end;
+$$;
+
+create or replace function public.handle_link_org_member_on_signup()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_email text;
+begin
+  v_email := lower(trim(coalesce(new.email, '')));
+  if v_email = '' then
+    return new;
+  end if;
+
+  update public.organization_members
+  set user_id = new.id,
+      invite_status = 'active',
+      updated_at = now()
+  where lower(email) = v_email
+    and user_id is null;
+
+  update public.professionals
+  set user_id = new.id
+  where lower(email) = v_email
+    and user_id is null;
+
+  update public.schedule_managers
+  set user_id = new.id
+  where lower(manager_email) = v_email
+    and user_id is null;
+
+  return new;
+exception
+  when others then
+    return new;
+end;
+$$;
+
+drop trigger if exists on_auth_user_created_link_members on auth.users;
+create trigger on_auth_user_created_link_members
+  after insert on auth.users
+  for each row
+  execute function public.handle_link_org_member_on_signup();
+
+notify pgrst, 'reload schema';
+```
+
+
 

@@ -70,7 +70,13 @@ create policy "Users can create their own subscription" on public.subscriptions 
 drop policy if exists "Users can update their own subscription" on public.subscriptions;
 create policy "Users can update their own subscription" on public.subscriptions for update using (auth.uid() = user_id) with check (auth.uid() = user_id);`;
 
-export default function PlanSettingsPanel() {
+interface PlanSettingsPanelProps {
+  embedded?: boolean;
+}
+
+export default function PlanSettingsPanel({
+  embedded = false,
+}: PlanSettingsPanelProps) {
   const router = useRouter();
   const [loading, setLoading] = useState(true);
   const [configured, setConfigured] = useState(false);
@@ -168,34 +174,37 @@ export default function PlanSettingsPanel() {
   }
 
   return (
-    <div className="mx-auto max-w-5xl space-y-8">
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <p className="text-sm font-medium text-emerald-700">
-            Assinatura e capacidade
-          </p>
-          <h1 className="mt-1 text-2xl font-bold tracking-tight text-slate-900 sm:text-3xl">
-            Planos da Clínica
-          </h1>
-          <p className="mt-1.5 text-sm text-slate-600">
-            Gerencie o plano selecionado na criação de conta e confira o SQL de
-            migração em <code className="font-mono text-xs text-slate-800">sql.md</code>.
-          </p>
-        </div>
+    <div className={embedded ? 'space-y-6' : 'mx-auto max-w-5xl space-y-8'}>
+      {!embedded && (
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+          <div>
+            <p className="text-sm font-medium text-emerald-700">
+              Assinatura e capacidade
+            </p>
+            <h1 className="mt-1 text-2xl font-bold tracking-tight text-slate-900 sm:text-3xl">
+              Planos da Clínica
+            </h1>
+            <p className="mt-1.5 text-sm text-slate-600">
+              Gerencie o plano selecionado na criação de conta e confira o SQL de
+              migração em{' '}
+              <code className="font-mono text-xs text-slate-800">sql.md</code>.
+            </p>
+          </div>
 
-        <button
-          type="button"
-          onClick={() => void loadData()}
-          disabled={loading}
-          className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white px-4 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50 disabled:opacity-60 whitespace-nowrap shrink-0"
-        >
-          <RefreshCw
-            className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`}
-            aria-hidden="true"
-          />
-          Atualizar
-        </button>
-      </div>
+          <button
+            type="button"
+            onClick={() => void loadData()}
+            disabled={loading}
+            className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white px-4 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50 disabled:opacity-60 whitespace-nowrap shrink-0"
+          >
+            <RefreshCw
+              className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`}
+              aria-hidden="true"
+            />
+            Atualizar
+          </button>
+        </div>
+      )}
 
       {error && (
         <div

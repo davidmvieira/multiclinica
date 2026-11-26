@@ -28,3 +28,24 @@ export function createSupabaseServerClient(accessToken?: string): SupabaseClient
       : {}),
   });
 }
+
+export function hasSupabaseServiceRoleKey(): boolean {
+  return Boolean(process.env.SUPABASE_SERVICE_ROLE_KEY?.trim());
+}
+
+export function createSupabaseAdminClient(): SupabaseClient | null {
+  const config = getSupabaseConfig();
+  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY?.trim();
+
+  if (!config || !serviceRoleKey) {
+    return null;
+  }
+
+  return createClient(config.url, serviceRoleKey, {
+    auth: {
+      persistSession: false,
+      autoRefreshToken: false,
+      detectSessionInUrl: false,
+    },
+  });
+}

@@ -607,9 +607,31 @@ export default function AgendaWorkspace() {
       return (
         <div
           role="alert"
-          className="rounded-xl border border-red-200 bg-red-50 p-6 text-sm text-red-800"
+          className="mx-auto max-w-2xl space-y-4 rounded-xl border border-red-200 bg-red-50 p-6 text-sm text-red-900"
         >
-          {loadError}
+          <p className="font-medium">{loadError}</p>
+          <div className="flex flex-wrap items-center gap-3">
+            <button
+              type="button"
+              onClick={() => {
+                setLoading(true);
+                loadWorkspace();
+              }}
+              className="inline-flex h-9 cursor-pointer items-center rounded-lg bg-red-700 px-3.5 text-xs font-semibold text-white transition hover:bg-red-800"
+            >
+              Tentar novamente
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setLoadError(null);
+                setTableNotFound(true);
+              }}
+              className="inline-flex h-9 cursor-pointer items-center rounded-lg border border-red-300 bg-white px-3.5 text-xs font-semibold text-red-800 transition hover:bg-red-100"
+            >
+              Ver script SQL de configuração
+            </button>
+          </div>
         </div>
       );
     }

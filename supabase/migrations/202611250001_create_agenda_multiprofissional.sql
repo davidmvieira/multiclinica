@@ -240,6 +240,30 @@ alter table public.patients add column if not exists phone text;
 alter table public.patients add column if not exists email text;
 alter table public.patients add column if not exists created_at timestamptz not null default now();
 
+do $$
+begin
+  if exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public' and table_name = 'patients' and column_name = 'full_name'
+  ) then
+    execute 'update public.patients set name = full_name where (name is null or name = ''Paciente'') and full_name is not null';
+    execute $fn$
+      create or replace function public.sync_patients_name_fields()
+      returns trigger
+      language plpgsql
+      as $trg$
+      begin
+        new.name := coalesce(nullif(trim(new.name), ''), new.full_name, 'Paciente');
+        new.full_name := coalesce(nullif(trim(new.full_name), ''), new.name);
+        return new;
+      end;
+      $trg$;
+    $fn$;
+    execute 'drop trigger if exists trg_sync_patients_name on public.patients';
+    execute 'create trigger trg_sync_patients_name before insert or update on public.patients for each row execute function public.sync_patients_name_fields()';
+  end if;
+end $$;
+
 -- 12. Serviços / procedimentos
 create table if not exists public.services (
   id uuid primary key default gen_random_uuid(),
@@ -452,6 +476,36 @@ alter table public.services enable row level security;
 alter table public.appointments enable row level security;
 alter table public.appointment_audit_logs enable row level security;
 
+-- Remover políticas legadas conflitantes caso alguma tabela já existisse no schema public
+do $$
+declare
+  pol record;
+begin
+  for pol in
+    select schemaname, tablename, policyname
+    from pg_policies
+    where schemaname = 'public'
+      and tablename in (
+        'organizations',
+        'units',
+        'organization_members',
+        'specialties',
+        'professionals',
+        'professional_specialties',
+        'schedules',
+        'schedule_managers',
+        'availability_rules',
+        'schedule_blocks',
+        'patients',
+        'services',
+        'appointments',
+        'appointment_audit_logs'
+      )
+  loop
+    execute format('drop policy if exists %I on %I.%I', pol.policyname, pol.schemaname, pol.tablename);
+  end loop;
+end $$;
+
 -- Políticas Organizations
 drop policy if exists "Org members can select organization" on public.organizations;
 create policy "Org members can select organization"
@@ -613,3 +667,5 @@ drop policy if exists "Org members can insert audit logs" on public.appointment_
 create policy "Org members can insert audit logs"
   on public.appointment_audit_logs for insert
   with check (public.is_org_member(organization_id));
+
+notify pgrst, 'reload schema';

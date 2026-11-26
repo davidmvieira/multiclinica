@@ -179,13 +179,36 @@ export async function GET(req: NextRequest) {
         .limit(80),
     ]);
 
-    if (unitsRes.error && isMissingAgendaTableError(unitsRes.error)) {
+    const queryResults = [
+      unitsRes,
+      specialtiesRes,
+      professionalsRes,
+      profSpecRes,
+      managersRes,
+      availabilityRes,
+      blocksRes,
+      patientsRes,
+      servicesRes,
+      appointmentsRes,
+      auditRes,
+    ];
+    const firstTableMissing = queryResults.find(
+      (r) => r.error && isMissingAgendaTableError(r.error)
+    );
+    if (firstTableMissing) {
       return NextResponse.json(
         {
           error: 'As tabelas da agenda ainda não existem no Supabase.',
           code: 'TABLE_NOT_FOUND',
         },
         { status: 404 }
+      );
+    }
+
+    const firstQueryErr = queryResults.find((r) => r.error)?.error;
+    if (firstQueryErr) {
+      throw new Error(
+        `[agenda_data:${firstQueryErr.code ?? 'ERR'}] ${firstQueryErr.message ?? 'Erro ao carregar registros'}`
       );
     }
 
@@ -243,9 +266,21 @@ export async function GET(req: NextRequest) {
       );
     }
     return response;
-  } catch {
+  } catch (err) {
+    console.error('[GET /api/agenda] failed:', err);
+    const detail =
+      err instanceof Error
+        ? err.message
+        : typeof err === 'object' && err !== null && 'message' in err
+          ? String((err as { message: unknown }).message)
+          : '';
     return NextResponse.json(
-      { error: 'Não foi possível carregar os dados da agenda.' },
+      {
+        error: detail
+          ? `Não foi possível carregar os dados da agenda (${detail}).`
+          : 'Não foi possível carregar os dados da agenda.',
+        code: 'AGENDA_LOAD_FAILED',
+      },
       { status: 502 }
     );
   }

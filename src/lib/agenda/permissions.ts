@@ -26,8 +26,11 @@ export function isMissingAgendaTableError(error: {
   const msg = (error.message ?? '').toLowerCase();
   return (
     error.code === '42P01' ||
+    error.code === '42703' ||
+    error.code === 'PGRST204' ||
     error.code === 'PGRST205' ||
     msg.includes('could not find the table') ||
+    msg.includes('could not find the') ||
     msg.includes('does not exist')
   );
 }
@@ -40,16 +43,31 @@ export async function resolveAgendaAccessContext(
   context: AgendaAccessContext | null;
   migrationPending: boolean;
 }> {
-  const { data: ownedOrgs, error: orgError } = await supabase
+  let { data: ownedOrgs, error: orgError } = await supabase
     .from('organizations')
     .select('id, owner_user_id, name, timezone')
     .limit(1);
+
+  if (!orgError && (!ownedOrgs || ownedOrgs.length === 0)) {
+    // Attempt to claim any pre-registered membership matching the authenticated email
+    const { error: claimErr } = await supabase.rpc('claim_pending_org_memberships');
+    if (!claimErr) {
+      const retry = await supabase
+        .from('organizations')
+        .select('id, owner_user_id, name, timezone')
+        .limit(1);
+      ownedOrgs = retry.data;
+      orgError = retry.error;
+    }
+  }
 
   if (orgError) {
     if (isMissingAgendaTableError(orgError)) {
       return { context: null, migrationPending: true };
     }
-    throw orgError;
+    throw new Error(
+      `[organizations:${orgError.code ?? 'ERR'}] ${orgError.message ?? 'Erro ao consultar organizations'}`
+    );
   }
 
   const organization = (ownedOrgs?.[0] ?? null) as AgendaOrganization | null;
@@ -85,6 +103,21 @@ export async function resolveAgendaAccessContext(
         .eq('organization_id', organization.id),
     ]);
 
+  const firstQueryError =
+    membersRes.error ||
+    schedulesRes.error ||
+    professionalsRes.error ||
+    managersRes.error;
+
+  if (firstQueryError) {
+    if (isMissingAgendaTableError(firstQueryError)) {
+      return { context: null, migrationPending: true };
+    }
+    throw new Error(
+      `[agenda_context:${firstQueryError.code ?? 'ERR'}] ${firstQueryError.message ?? 'Erro ao carregar contexto'}`
+    );
+  }
+
   const memberRow = membersRes.data as {
     role: MemberRole;
     unit_id: string | null;
@@ -109,6 +142,7 @@ export async function resolveAgendaAccessContext(
 
   const permissionsBySchedule: Record<string, SchedulePermissionFlags> = {};
   const visibleSchedules: AgendaSchedule[] = [];
+  const normalizedUserEmail = (userEmail ?? '').toLowerCase();
 
   for (const schedule of allSchedules) {
     if (isOwner || role === 'admin') {
@@ -148,7 +182,7 @@ export async function resolveAgendaAccessContext(
       (m) =>
         m.schedule_id === schedule.id &&
         (m.user_id === userId ||
-          m.manager_email.toLowerCase() === userEmail.toLowerCase())
+          (m.manager_email ?? '').toLowerCase() === normalizedUserEmail)
     );
 
     if (delegated && delegated.can_view) {

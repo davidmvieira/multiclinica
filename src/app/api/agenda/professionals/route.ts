@@ -51,6 +51,16 @@ export async function POST(req: NextRequest) {
       ? body.color
       : '#059669';
   const unitId = typeof body.unitId === 'string' && body.unitId ? body.unitId : null;
+  const userId =
+    typeof body.userId === 'string' && body.userId.trim()
+      ? body.userId.trim()
+      : null;
+  const phone =
+    typeof body.phone === 'string' ? body.phone.trim().slice(0, 40) : '';
+  const councilNumber =
+    typeof body.councilNumber === 'string'
+      ? body.councilNumber.trim().slice(0, 40)
+      : '';
   const specialtyIds = Array.isArray(body.specialtyIds)
     ? body.specialtyIds.filter((s): s is string => typeof s === 'string')
     : [];
@@ -83,6 +93,22 @@ export async function POST(req: NextRequest) {
       },
       { status: 403 }
     );
+  }
+
+  if (unitId) {
+    const { data: unitRow } = await supabase
+      .from('units')
+      .select('id')
+      .eq('organization_id', context.organization.id)
+      .eq('id', unitId)
+      .maybeSingle();
+
+    if (!unitRow) {
+      return NextResponse.json(
+        { error: 'A unidade selecionada não pertence a esta clínica.' },
+        { status: 400 }
+      );
+    }
   }
 
   // Enforce plan professional limit
@@ -119,18 +145,35 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  const { data: prof, error: profError } = await supabase
+  const baseInsert = {
+    organization_id: context.organization.id,
+    unit_id: unitId,
+    user_id: userId,
+    name,
+    email: email || null,
+    color,
+    is_active: true,
+  };
+
+  let { data: prof, error: profError } = await supabase
     .from('professionals')
     .insert({
-      organization_id: context.organization.id,
-      unit_id: unitId,
-      name,
-      email: email || null,
-      color,
-      is_active: true,
+      ...baseInsert,
+      ...(phone ? { phone } : {}),
+      ...(councilNumber ? { council_number: councilNumber } : {}),
     })
     .select('id, organization_id, unit_id, user_id, name, email, color, is_active')
     .single();
+
+  if (profError && profError.code === '42703') {
+    const fallback = await supabase
+      .from('professionals')
+      .insert(baseInsert)
+      .select('id, organization_id, unit_id, user_id, name, email, color, is_active')
+      .single();
+    prof = fallback.data;
+    profError = fallback.error;
+  }
 
   if (profError || !prof) {
     return NextResponse.json(
@@ -267,7 +310,7 @@ export async function PATCH(req: NextRequest) {
 
   const { data: existing } = await supabase
     .from('professionals')
-    .select('id, organization_id, unit_id, name, email, color, is_active')
+    .select('id, organization_id, unit_id, user_id, name, email, color, is_active')
     .eq('organization_id', context.organization.id)
     .eq('id', id)
     .maybeSingle();
@@ -283,6 +326,20 @@ export async function PATCH(req: NextRequest) {
     typeof body.name === 'string' && body.name.trim()
       ? body.name.trim().slice(0, 120)
       : existing.name;
+  const nextEmail =
+    body.email === null
+      ? null
+      : typeof body.email === 'string'
+        ? body.email.trim().toLowerCase() || null
+        : existing.email;
+  const nextUserId =
+    body.userId === null || body.userId === ''
+      ? body.userId === undefined
+        ? existing.user_id
+        : null
+      : typeof body.userId === 'string'
+        ? body.userId.trim()
+        : existing.user_id;
   const nextColor =
     typeof body.color === 'string' && /^#[0-9a-fA-F]{6}$/.test(body.color)
       ? body.color
@@ -296,18 +353,96 @@ export async function PATCH(req: NextRequest) {
   const nextActive =
     typeof body.isActive === 'boolean' ? body.isActive : existing.is_active;
 
-  const { data: updated, error } = await supabase
+  if (nextUnitId) {
+    const { data: unitRow } = await supabase
+      .from('units')
+      .select('id')
+      .eq('organization_id', context.organization.id)
+      .eq('id', nextUnitId)
+      .maybeSingle();
+
+    if (!unitRow) {
+      return NextResponse.json(
+        { error: 'A unidade selecionada não pertence a esta clínica.' },
+        { status: 400 }
+      );
+    }
+  }
+
+  // Enforce plan professional limit if reactivating an inactive professional
+  if (!existing.is_active && nextActive) {
+    let planSlug = isValidPlanSlug(session.user.plan_slug)
+      ? session.user.plan_slug
+      : 'free';
+    const { data: subRow } = await supabase
+      .from('subscriptions')
+      .select('plan_slug')
+      .eq('user_id', session.user.id)
+      .maybeSingle();
+    if (subRow && isValidPlanSlug(subRow.plan_slug)) {
+      planSlug = subRow.plan_slug;
+    }
+    const planDef = getPlanBySlug(planSlug);
+
+    if (planDef.max_professionals !== null) {
+      const { count } = await supabase
+        .from('professionals')
+        .select('id', { count: 'exact', head: true })
+        .eq('organization_id', context.organization.id)
+        .eq('is_active', true);
+
+      if ((count ?? 0) >= planDef.max_professionals) {
+        return NextResponse.json(
+          {
+            error: `Seu plano ${planDef.name} permite até ${planDef.max_professionals} ${
+              planDef.max_professionals === 1
+                ? 'profissional ativo'
+                : 'profissionais ativos'
+            }.`,
+            code: 'PLAN_LIMIT_REACHED',
+          },
+          { status: 403 }
+        );
+      }
+    }
+  }
+
+  const baseUpdate = {
+    name: nextName,
+    email: nextEmail,
+    user_id: nextUserId,
+    color: nextColor,
+    unit_id: nextUnitId,
+    is_active: nextActive,
+  };
+
+  const extraUpdate: Record<string, unknown> = { ...baseUpdate };
+  if (typeof body.phone === 'string') {
+    extraUpdate.phone = body.phone.trim().slice(0, 40) || null;
+  }
+  if (typeof body.councilNumber === 'string') {
+    extraUpdate.council_number = body.councilNumber.trim().slice(0, 40) || null;
+  }
+
+  let { data: updated, error } = await supabase
     .from('professionals')
-    .update({
-      name: nextName,
-      color: nextColor,
-      unit_id: nextUnitId,
-      is_active: nextActive,
-    })
+    .update(extraUpdate)
     .eq('organization_id', context.organization.id)
     .eq('id', id)
     .select('id, organization_id, unit_id, user_id, name, email, color, is_active')
     .single();
+
+  if (error && error.code === '42703') {
+    const fallback = await supabase
+      .from('professionals')
+      .update(baseUpdate)
+      .eq('organization_id', context.organization.id)
+      .eq('id', id)
+      .select('id, organization_id, unit_id, user_id, name, email, color, is_active')
+      .single();
+    updated = fallback.data;
+    error = fallback.error;
+  }
 
   if (error || !updated) {
     return NextResponse.json(
@@ -315,6 +450,25 @@ export async function PATCH(req: NextRequest) {
       { status: 502 }
     );
   }
+
+  const scheduleUpdate: Record<string, unknown> = {
+    name: `Agenda — ${nextName}`,
+    unit_id: nextUnitId,
+    is_active: nextActive,
+  };
+  if (
+    typeof body.slotDurationMinutes === 'number' &&
+    body.slotDurationMinutes >= 10 &&
+    body.slotDurationMinutes <= 240
+  ) {
+    scheduleUpdate.slot_duration_minutes = Math.round(body.slotDurationMinutes);
+  }
+
+  await supabase
+    .from('schedules')
+    .update(scheduleUpdate)
+    .eq('organization_id', context.organization.id)
+    .eq('professional_id', id);
 
   if (Array.isArray(body.specialtyIds)) {
     const specIds = body.specialtyIds.filter(

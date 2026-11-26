@@ -100,7 +100,7 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  const { data: patient, error } = await supabase
+  let { data: patient, error } = await supabase
     .from('patients')
     .insert({
       organization_id: context.organization.id,
@@ -110,6 +110,26 @@ export async function POST(req: NextRequest) {
     })
     .select('id, organization_id, name, phone, email')
     .single();
+
+  if (
+    error &&
+    error.code === '23502' &&
+    error.message?.toLowerCase().includes('full_name')
+  ) {
+    const retry = await supabase
+      .from('patients')
+      .insert({
+        organization_id: context.organization.id,
+        name,
+        full_name: name,
+        phone: phone || null,
+        email: email || null,
+      })
+      .select('id, organization_id, name, phone, email')
+      .single();
+    patient = retry.data;
+    error = retry.error;
+  }
 
   if (error || !patient) {
     return NextResponse.json(
