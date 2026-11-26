@@ -15,9 +15,14 @@ export async function GET(req: NextRequest) {
 
   const section = req.nextUrl.searchParams.get('section')?.trim();
   const fileName =
-    section === '6'
-      ? '202611250003_multiclinic_direct_reset.sql'
-      : '202611250002_admin_settings_users_units.sql';
+    section === '7'
+      ? '202611260001_patients_and_medical_records.sql'
+      : section === '6'
+        ? '202611250003_multiclinic_direct_reset.sql'
+        : '202611250002_admin_settings_users_units.sql';
+
+  const fallbackSection =
+    section === '7' ? '7' : section === '6' ? '6' : '5';
 
   try {
     const sqlPath = path.join(process.cwd(), 'supabase', 'migrations', fileName);
@@ -26,7 +31,7 @@ export async function GET(req: NextRequest) {
   } catch {
     return NextResponse.json(
       {
-        error: `Consulte a Seção ${section === '6' ? '6' : '5'} do arquivo sql.md na raiz do projeto para obter o script SQL.`,
+        error: `Consulte a Seção ${fallbackSection} do arquivo sql.md na raiz do projeto para obter o script SQL.`,
       },
       { status: 404 }
     );
