@@ -7,6 +7,7 @@ import {
   CheckCircle2,
   ClipboardCopy,
   FileCheck2,
+  FileText,
   Lock,
   Printer,
   Save,
@@ -15,6 +16,8 @@ import {
   Trash2,
 } from 'lucide-react';
 import { useMemo, useState } from 'react';
+
+import OfficialDossierModal from '@/components/clinical/official-dossier-modal';
 
 import {
   CBDF_CATALOG,
@@ -118,6 +121,7 @@ export default function EvaluationFormRenderer({
   const [missingFields, setMissingFields] = useState<string[]>([]);
   const [notice, setNotice] = useState<string | null>(null);
   const [sharePreview, setSharePreview] = useState<string | null>(null);
+  const [officialExportOpen, setOfficialExportOpen] = useState(false);
   const [copiedShare, setCopiedShare] = useState(false);
 
   const orderedSections = useMemo<EvaluationSectionDefinition[]>(() => {
@@ -336,6 +340,14 @@ export default function EvaluationFormRenderer({
               >
                 <Printer className="h-3.5 w-3.5" aria-hidden="true" />
                 Exportar PDF
+              </button>
+              <button
+                type="button"
+                onClick={() => setOfficialExportOpen(true)}
+                className="inline-flex h-9 cursor-pointer items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-3 text-xs font-semibold text-emerald-800 transition-colors hover:bg-emerald-100 whitespace-nowrap"
+              >
+                <FileText className="h-3.5 w-3.5" aria-hidden="true" />
+                Prontuário Oficial
               </button>
             </>
           ) : canEdit ? (
@@ -995,6 +1007,14 @@ export default function EvaluationFormRenderer({
             </table>
           </div>
         </section>
+      )}
+
+      {officialExportOpen && (
+        <OfficialDossierModal
+          patientId={patient.id}
+          patientName={patient.name}
+          onClose={() => setOfficialExportOpen(false)}
+        />
       )}
     </div>
   );

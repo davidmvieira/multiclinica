@@ -136,7 +136,7 @@ export async function POST(
       .maybeSingle(),
     supabase
       .from('professionals')
-      .select('display_name')
+      .select('name')
       .eq('organization_id', context.organization.id)
       .eq('user_id', session.user.id)
       .maybeSingle(),
@@ -145,7 +145,7 @@ export async function POST(
   const templateVersion = (verRes.data ??
     null) as EvaluationTemplateVersionRecord | null;
   const actorName =
-    (profRes.data?.display_name as string | null) ||
+    (profRes.data?.name as string | null) ||
     session.user.name ||
     session.user.email ||
     'Profissional';

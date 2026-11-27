@@ -204,12 +204,12 @@ export default function DashboardShell({ children }: { children: ReactNode }) {
 
   return (
     <div className="flex min-h-screen bg-white text-slate-900">
-      <aside className="hidden w-64 shrink-0 border-r border-slate-200 bg-slate-50 lg:block">
+      <aside className="hidden w-64 shrink-0 border-r border-slate-200 bg-slate-50 lg:block print:hidden">
         <div className="sticky top-0 h-screen">{sidebarContent}</div>
       </aside>
 
       {mobileOpen && (
-        <div className="fixed inset-0 z-50 flex lg:hidden">
+        <div className="fixed inset-0 z-50 flex lg:hidden print:hidden">
           <div
             className="fixed inset-0 bg-slate-900/30"
             onClick={() => setMobileOpen(false)}
@@ -222,7 +222,7 @@ export default function DashboardShell({ children }: { children: ReactNode }) {
       )}
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="sticky top-0 z-30 flex h-16 items-center justify-between gap-4 border-b border-slate-200 bg-white px-4 sm:px-8">
+        <header className="sticky top-0 z-30 flex h-16 items-center justify-between gap-4 border-b border-slate-200 bg-white px-4 sm:px-8 print:hidden">
           <div className="flex min-w-0 items-center gap-3">
             <button
               type="button"
@@ -283,7 +283,7 @@ export default function DashboardShell({ children }: { children: ReactNode }) {
           </div>
         </header>
 
-        <main className="flex-1 px-4 py-8 sm:px-8">{children}</main>
+        <main className="flex-1 px-4 py-8 sm:px-8 print:p-0">{children}</main>
       </div>
     </div>
   );

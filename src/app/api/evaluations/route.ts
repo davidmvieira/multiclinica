@@ -135,7 +135,7 @@ export async function GET(req: NextRequest) {
     const [profRes, patientsRes] = await Promise.all([
       supabase
         .from('professionals')
-        .select('id, display_name, council_number')
+        .select('id, name, council_number')
         .eq('organization_id', context.organization.id)
         .eq('user_id', session.user.id)
         .maybeSingle(),
@@ -147,7 +147,7 @@ export async function GET(req: NextRequest) {
     ]);
 
     const currentUserName =
-      profRes.data?.display_name ||
+      profRes.data?.name ||
       session.user.name ||
       session.user.email ||
       'Profissional';
@@ -379,7 +379,7 @@ export async function POST(req: NextRequest) {
       .maybeSingle(),
     supabase
       .from('professionals')
-      .select('id, display_name, council_number')
+      .select('id, name, council_number')
       .eq('organization_id', context.organization.id)
       .eq('user_id', session.user.id)
       .maybeSingle(),
@@ -452,7 +452,7 @@ export async function POST(req: NextRequest) {
   const procedureDescription = cleanOptionalText(body.procedureDescription, 300);
 
   const authorName =
-    (profRes.data?.display_name as string | null) ||
+    (profRes.data?.name as string | null) ||
     session.user.name ||
     session.user.email ||
     'Fisioterapeuta';

@@ -17,6 +17,7 @@ import {
   Pencil,
   Phone,
   Plus,
+  Printer,
   Search,
   ShieldCheck,
   Stethoscope,
@@ -28,6 +29,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
+import OfficialDossierModal from '@/components/clinical/official-dossier-modal';
 import CorrectiveNoteModal from '@/components/patients/corrective-note-modal';
 import PatientFormModal from '@/components/patients/patient-form-modal';
 import PatientRecordModal from '@/components/patients/patient-record-modal';
@@ -74,6 +76,7 @@ export default function PatientDetailWorkspace({
   }>({ open: false, draft: null });
   const [addendumTarget, setAddendumTarget] =
     useState<MedicalRecordEntry | null>(null);
+  const [officialExportOpen, setOfficialExportOpen] = useState(false);
   const [copiedSql, setCopiedSql] = useState(false);
   const [deletingDraftId, setDeletingDraftId] = useState<string | null>(null);
 
@@ -292,6 +295,15 @@ export default function PatientDetailWorkspace({
           </div>
 
           <div className="flex flex-wrap items-center gap-2.5 shrink-0">
+            <button
+              type="button"
+              onClick={() => setOfficialExportOpen(true)}
+              className="inline-flex h-10 cursor-pointer items-center gap-2 rounded-lg border border-slate-200 bg-white px-3.5 text-sm font-medium text-slate-700 hover:bg-slate-50 whitespace-nowrap shrink-0"
+            >
+              <Printer className="h-4 w-4 text-emerald-700" aria-hidden="true" />
+              Prontuário Oficial
+            </button>
+
             <button
               type="button"
               onClick={() => setEditModalOpen(true)}
@@ -1158,6 +1170,14 @@ export default function PatientDetailWorkspace({
             setNotice('Nota corretiva adicionada com rastreabilidade.');
             void loadDetail();
           }}
+        />
+      )}
+
+      {officialExportOpen && (
+        <OfficialDossierModal
+          patientId={patient.id}
+          patientName={patient.name}
+          onClose={() => setOfficialExportOpen(false)}
         />
       )}
     </div>

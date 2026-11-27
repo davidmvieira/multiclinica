@@ -230,7 +230,7 @@ export async function POST(req: NextRequest) {
       .maybeSingle(),
     supabase
       .from('professionals')
-      .select('display_name')
+      .select('name')
       .eq('organization_id', context.organization.id)
       .eq('user_id', session.user.id)
       .maybeSingle(),
@@ -258,7 +258,7 @@ export async function POST(req: NextRequest) {
 
   const nextVersionNumber = Number(tplRes.data.current_version_number ?? 1) + 1;
   const creatorName =
-    (profRes.data?.display_name as string | null) ||
+    (profRes.data?.name as string | null) ||
     session.user.name ||
     session.user.email ||
     'Responsável Técnico';

@@ -11,6 +11,7 @@ import {
   GitBranch,
   Lock,
   Plus,
+  Printer,
   RefreshCw,
   Search,
   ShieldCheck,
@@ -21,6 +22,7 @@ import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import AgendaSqlSetup from '@/components/agenda/agenda-sql-setup';
+import OfficialDossierModal from '@/components/clinical/official-dossier-modal';
 import EvaluationFormRenderer from '@/components/evaluations/evaluation-form-renderer';
 import TemplateVersionModal from '@/components/evaluations/template-version-modal';
 import { EVALUATION_AUDIT_ACTION_LABELS } from '@/lib/evaluations/templates-catalog';
@@ -82,6 +84,10 @@ export default function EvaluationsWorkspace() {
     null
   );
   const [openingId, setOpeningId] = useState<string | null>(null);
+  const [officialExportPatient, setOfficialExportPatient] = useState<{
+    id: string;
+    name: string;
+  } | null>(null);
 
   const loadWorkspace = useCallback(async () => {
     setLoading(true);
@@ -697,19 +703,35 @@ export default function EvaluationsWorkspace() {
                           )}
                         </td>
                         <td className="px-4 py-3.5 text-right align-top">
-                          <button
-                            type="button"
-                            disabled={openingId === ev.id}
-                            onClick={() => void handleOpenEvaluation(ev)}
-                            className="inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
-                          >
-                            <Eye className="h-3.5 w-3.5" />
-                            {openingId === ev.id
-                              ? 'Abrindo...'
-                              : ev.status === 'draft'
-                                ? 'Continuar'
-                                : 'Consultar'}
-                          </button>
+                          <div className="inline-flex items-center justify-end gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setOfficialExportPatient({
+                                  id: ev.patient_id,
+                                  name: ev.patient_name ?? 'Paciente',
+                                })
+                              }
+                              title="Exportar Prontuário Oficial"
+                              className="inline-flex h-8 cursor-pointer items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
+                            >
+                              <Printer className="h-3.5 w-3.5 text-emerald-700" aria-hidden="true" />
+                              Prontuário
+                            </button>
+                            <button
+                              type="button"
+                              disabled={openingId === ev.id}
+                              onClick={() => void handleOpenEvaluation(ev)}
+                              className="inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+                            >
+                              <Eye className="h-3.5 w-3.5" />
+                              {openingId === ev.id
+                                ? 'Abrindo...'
+                                : ev.status === 'draft'
+                                  ? 'Continuar'
+                                  : 'Consultar'}
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     ))}
@@ -991,6 +1013,14 @@ export default function EvaluationsWorkspace() {
             );
             void loadWorkspace();
           }}
+        />
+      )}
+
+      {officialExportPatient && (
+        <OfficialDossierModal
+          patientId={officialExportPatient.id}
+          patientName={officialExportPatient.name}
+          onClose={() => setOfficialExportPatient(null)}
         />
       )}
     </div>

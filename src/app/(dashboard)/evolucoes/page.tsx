@@ -1,3 +1,5 @@
+import EvolutionsWorkspace from '@/components/evolutions/evolutions-workspace';
+
 export default function EvolucoesPage() {
-  return <main>Evoluções</main>;
+  return <EvolutionsWorkspace />;
 }
